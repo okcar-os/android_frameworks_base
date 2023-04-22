@@ -7930,7 +7930,9 @@ final class ActivityRecord extends WindowToken implements WindowManagerService.A
      */
     @ActivityInfo.ScreenOrientation
     int getRequestedOrientation() {
-        return super.getOverrideOrientation();
+        // return mOrientation;
+        // Force all apps to display in landscape mode
+        return ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
     }
 
     /**
