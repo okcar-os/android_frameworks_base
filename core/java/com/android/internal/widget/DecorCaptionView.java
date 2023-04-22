@@ -82,6 +82,7 @@ public class DecorCaptionView extends ViewGroup implements View.OnTouchListener,
     private View mContent;
     private View mMaximize;
     private View mClose;
+    private View mHideCaption;
 
     // Fields for detecting drag events.
     private int mTouchDownX;
@@ -96,6 +97,7 @@ public class DecorCaptionView extends ViewGroup implements View.OnTouchListener,
     private GestureDetector mGestureDetector;
     private final Rect mCloseRect = new Rect();
     private final Rect mMaximizeRect = new Rect();
+    private final Rect mHideCaptionRect = new Rect();
     private View mClickTarget;
     private int mRootScrollY;
 
@@ -137,6 +139,7 @@ public class DecorCaptionView extends ViewGroup implements View.OnTouchListener,
         mOwner.getDecorView().setOutlineProvider(ViewOutlineProvider.BOUNDS);
         mMaximize = findViewById(R.id.maximize_window);
         mClose = findViewById(R.id.close_window);
+        mHideCaption = findViewById(R.id.hide_caption);
     }
 
     @Override
@@ -152,6 +155,9 @@ public class DecorCaptionView extends ViewGroup implements View.OnTouchListener,
             }
             if (mCloseRect.contains(x, y - mRootScrollY)) {
                 mClickTarget = mClose;
+            }
+            if (mHideCaptionRect.contains(x, y - mRootScrollY)) {
+                mClickTarget = mHideCaption;
             }
         }
         return mClickTarget != null;
@@ -288,10 +294,12 @@ public class DecorCaptionView extends ViewGroup implements View.OnTouchListener,
             captionHeight = mCaption.getBottom() - mCaption.getTop();
             mMaximize.getHitRect(mMaximizeRect);
             mClose.getHitRect(mCloseRect);
+            mHideCaption.getHitRect(mHideCaptionRect);
         } else {
             captionHeight = 0;
             mMaximizeRect.setEmpty();
             mCloseRect.setEmpty();
+            mHideCaptionRect.setEmpty();
         }
 
         if (mContent != null) {
@@ -306,7 +314,9 @@ public class DecorCaptionView extends ViewGroup implements View.OnTouchListener,
         ((DecorView) mOwner.getDecorView()).notifyCaptionHeightChanged();
 
         // This assumes that the caption bar is at the top.
-        mOwner.notifyRestrictedCaptionAreaCallback(mMaximize.getLeft(), mMaximize.getTop(),
+        // mOwner.notifyRestrictedCaptionAreaCallback(mMaximize.getLeft(), mMaximize.getTop(),
+        //         mClose.getRight(), mClose.getBottom());
+        mOwner.notifyRestrictedCaptionAreaCallback(mHideCaption.getLeft(), mHideCaption.getTop(),
                 mClose.getRight(), mClose.getBottom());
     }
 
@@ -385,6 +395,8 @@ public class DecorCaptionView extends ViewGroup implements View.OnTouchListener,
         } else if (mClickTarget == mClose) {
             mOwner.dispatchOnWindowDismissed(
                     true /*finishTask*/, false /*suppressWindowTransition*/);
+        } else if (mClickTarget == mHideCaption) {
+            ((DecorView)mOwner.getDecorView()).setDecorCaptionViewShow(false);
         }
         return true;
     }

@@ -5400,6 +5400,8 @@
     <string name="maximize_button_text">Maximize</string>
     <!-- Accessibility text for the close window button -->
     <string name="close_button_text">Close</string>
+    <!-- Accessibility text for the hide freeform window caption button -->
+    <string name="hide_caption_button_text">Hide Caption</string>
 
     <!-- Ellipsis character to appear in notification templates, e.g.
          notification_template_material_inbox.xml.

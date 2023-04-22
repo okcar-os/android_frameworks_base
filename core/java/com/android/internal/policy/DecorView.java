@@ -71,6 +71,7 @@ import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.graphics.drawable.InsetDrawable;
 import android.graphics.drawable.LayerDrawable;
+import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.Pair;
@@ -250,6 +251,9 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
     // buttons. The visibility of this decor depends on the workspace and the window type.
     // If the window type does not require such a view, this member might be null.
     private DecorCaptionView mDecorCaptionView;
+
+    private boolean decorCaptionViewVisible = false;
+    private long decorCaptionViewTriggerUpTime = 0;
 
     private boolean mWindowResizeCallbacksAdded = false;
     private Drawable.Callback mLastBackgroundDrawableCb = null;
@@ -525,6 +529,18 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
     @Override
     public boolean onInterceptTouchEvent(MotionEvent event) {
         int action = event.getAction();
+
+        if ( action == MotionEvent.ACTION_UP ) {
+            int y = (int) event.getY();
+            if ( y < dipToPx(50)) {
+                // Double-click the top of the window repeatedly to display DecorCaptionView
+                if ( !decorCaptionViewVisible && Math.abs(SystemClock.uptimeMillis() - decorCaptionViewTriggerUpTime) < 1000 ) {
+                    setDecorCaptionViewShow(true);
+                }
+                decorCaptionViewTriggerUpTime = event.getEventTime();
+            }
+        }
+
         if (mHasCaption && isShowingCaption()) {
             // Don't dispatch ACTION_DOWN to the captionr if the window is resizable and the event
             // was (starting) outside the window. Window resizing events should be handled by
@@ -2176,10 +2192,17 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
                 & View.SYSTEM_UI_FLAG_FULLSCREEN));
     }
 
+    public void setDecorCaptionViewShow(boolean show){
+        Configuration config = getResources().getConfiguration();
+        decorCaptionViewVisible = show;
+        updateDecorCaptionStatus(config);
+    }
+
     private void updateDecorCaptionStatus(Configuration config) {
         final boolean displayWindowDecor = config.windowConfiguration.hasWindowDecorCaption()
                 && !isFillingScreen(config);
-        if (mDecorCaptionView == null && displayWindowDecor) {
+
+        if (mDecorCaptionView == null && displayWindowDecor && decorCaptionViewVisible) {
             // Configuration now requires a caption.
             final LayoutInflater inflater = mWindow.getLayoutInflater();
             mDecorCaptionView = createDecorCaptionView(inflater);
@@ -2194,8 +2217,8 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
             }
         } else if (mDecorCaptionView != null) {
             // We might have to change the kind of surface before we do anything else.
-            mDecorCaptionView.onConfigurationChanged(displayWindowDecor);
-            enableCaption(displayWindowDecor);
+            mDecorCaptionView.onConfigurationChanged(displayWindowDecor && decorCaptionViewVisible);
+            enableCaption(displayWindowDecor && decorCaptionViewVisible);
         }
     }
 
@@ -2321,6 +2344,8 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
                 R.drawable.decor_maximize_button_light);
         view.findViewById(R.id.close_window).setBackgroundResource(
                 R.drawable.decor_close_button_light);
+        view.findViewById(R.id.hide_caption).setBackgroundResource(
+                R.drawable.decor_hide_caption_light);
     }
 
     private void setDarkDecorCaptionShade(DecorCaptionView view) {
