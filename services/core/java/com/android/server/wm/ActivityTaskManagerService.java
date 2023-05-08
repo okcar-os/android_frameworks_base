@@ -36,6 +36,9 @@ import static android.app.ActivityManagerInternal.ALLOW_NON_FULL;
 import static android.app.ActivityTaskManager.INVALID_TASK_ID;
 import static android.app.ActivityTaskManager.RESIZE_MODE_PRESERVE_WINDOW;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_DREAM;
+import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
+import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
+import static android.app.WindowConfiguration.WINDOWING_MODE_FREEFORM;
 import static android.app.WindowConfiguration.WINDOWING_MODE_PINNED;
 import static android.content.Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS;
 import static android.content.Intent.FLAG_ACTIVITY_NEW_TASK;
@@ -6902,5 +6905,56 @@ public class ActivityTaskManagerService extends IActivityTaskManager.Stub {
 
     public boolean shouldForceLongScreen(String packageName) {
         return mLineageActivityManager.shouldForceLongScreen(packageName);
+    }
+
+    public int setFreeformWindowingMode(String packageName, boolean enter, int left, int top, int right, int bottom) {
+        ActivityRecord r = mRootWindowContainer.getTopResumedActivity();
+        if ( r == null ) {
+            return -1;
+        }
+        if ( !r.packageName.contentEquals(packageName) ) {
+            return -1;
+        }
+        
+        try {
+            final Task rootTask = r.getRootTask();
+            if (rootTask == null) {
+                throw new IllegalStateException("toggleFreeformWindowingMode: the activity "
+                        + "doesn't have a root task");
+            }
+
+            if (!rootTask.inFreeformWindowingMode()
+                    && rootTask.getWindowingMode() != WINDOWING_MODE_FULLSCREEN) {
+                throw new IllegalStateException("toggleFreeformWindowingMode: You can only "
+                        + "toggle between fullscreen and freeform.");
+            }
+
+            if ( enter ) {                
+                if (rootTask.inFreeformWindowingMode()) {
+                    // DoNothing
+                } else if (!r.supportsFreeform()) {
+                    throw new IllegalStateException(
+                            "This activity is currently not freeform-enabled");
+                } else if (rootTask.getParent().inFreeformWindowingMode()) {
+                    // If the window is on a freeform display, set it to undefined. It will be
+                    // resolved to freeform and it can adjust windowing mode when the display mode
+                    // changes in runtime.                    
+                    rootTask.setWindowingMode(WINDOWING_MODE_UNDEFINED);
+                } else {                    
+                    rootTask.setWindowingMode(WINDOWING_MODE_FREEFORM);
+                }
+
+                Rect bounds = new Rect(left, top, right, bottom);
+                rootTask.setBounds(bounds);
+            } else {
+                if (rootTask.inFreeformWindowingMode()) {
+                    rootTask.setWindowingMode(WINDOWING_MODE_FULLSCREEN);
+                    rootTask.setBounds(null);
+                }
+            }            
+        } catch (Exception e) {
+            return -2;
+        }
+        return 0;
     }
 }

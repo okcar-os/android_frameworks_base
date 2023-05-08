@@ -5289,4 +5289,21 @@ public class ActivityManager {
                     }
                 };
     }
+
+    /**
+     * Control the window corresponding to packageName to switch between full screen/freeform mode
+     * Before switching, you need to make sure that the Activity corresponding to the packageName you want to operate is displayed in the foreground.
+     * 
+     * @return 0 if success
+     *
+     * @hide
+     */
+    @SystemApi(client = SystemApi.Client.PRIVILEGED_APPS)
+    public int setFreeformWindowingMode(@NonNull String packageName, boolean enter, int left, int top, int right, int bottom) {
+        try {
+            return getService().setFreeformWindowingMode(packageName, enter, left, top, right, bottom);
+        } catch (RemoteException e) {
+            return 1;
+        }        
+    };
 }
