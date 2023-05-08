@@ -1090,65 +1090,70 @@ public final class DisplayCutout {
      */
     private static Pair<Path, DisplayCutout> pathAndDisplayCutoutFromSpec(
             String pathSpec, String rectSpec, int physicalDisplayWidth, int physicalDisplayHeight,
-            int displayWidth, int displayHeight, float density, Insets waterfallInsets) {
-        // Always use the rect approximation spec to create the cutout if it's not null because
-        // transforming and sending a Region constructed from a path is very costly.
-        String spec = rectSpec != null ? rectSpec : pathSpec;
-        if (TextUtils.isEmpty(spec) && waterfallInsets.equals(Insets.NONE)) {
-            return NULL_PAIR;
-        }
-
-        final float physicalPixelDisplaySizeRatio = DisplayUtils.getPhysicalPixelDisplaySizeRatio(
-                physicalDisplayWidth, physicalDisplayHeight, displayWidth, displayHeight);
-
-        synchronized (CACHE_LOCK) {
-            if (spec.equals(sCachedSpec) && sCachedDisplayWidth == displayWidth
-                    && sCachedDisplayHeight == displayHeight
-                    && sCachedDensity == density
-                    && waterfallInsets.equals(sCachedWaterfallInsets)
-                    && sCachedPhysicalPixelDisplaySizeRatio == physicalPixelDisplaySizeRatio) {
-                return sCachedCutout;
-            }
-        }
-
-        spec = spec.trim();
-
-        CutoutSpecification cutoutSpec = new CutoutSpecification.Parser(density,
-                physicalDisplayWidth, physicalDisplayHeight, physicalPixelDisplaySizeRatio)
-                .parse(spec);
-        Rect safeInset = cutoutSpec.getSafeInset();
-        final Rect boundLeft = cutoutSpec.getLeftBound();
-        final Rect boundTop = cutoutSpec.getTopBound();
-        final Rect boundRight = cutoutSpec.getRightBound();
-        final Rect boundBottom = cutoutSpec.getBottomBound();
+            int displayWidth, int displayHeight, float density, Insets waterfallInsets) {        
 
 
-        if (!waterfallInsets.equals(Insets.NONE)) {
-            safeInset.set(
-                    Math.max(waterfallInsets.left, safeInset.left),
-                    Math.max(waterfallInsets.top, safeInset.top),
-                    Math.max(waterfallInsets.right, safeInset.right),
-                    Math.max(waterfallInsets.bottom, safeInset.bottom));
-        }
+        // // Always use the rect approximation spec to create the cutout if it's not null because
+        // // transforming and sending a Region constructed from a path is very costly.
+        // String spec = rectSpec != null ? rectSpec : pathSpec;
+        // if (TextUtils.isEmpty(spec) && waterfallInsets.equals(Insets.NONE)) {
+        //     return NULL_PAIR;
+        // }
 
-        final CutoutPathParserInfo cutoutPathParserInfo = new CutoutPathParserInfo(
-                displayWidth, displayHeight, physicalDisplayWidth, physicalDisplayHeight, density,
-                pathSpec.trim(), ROTATION_0, 1f /* scale */, physicalPixelDisplaySizeRatio);
+        // final float physicalPixelDisplaySizeRatio = DisplayUtils.getPhysicalPixelDisplaySizeRatio(
+        //         physicalDisplayWidth, physicalDisplayHeight, displayWidth, displayHeight);
 
-        final DisplayCutout cutout = new DisplayCutout(
-                safeInset, waterfallInsets, boundLeft, boundTop, boundRight, boundBottom,
-                cutoutPathParserInfo , false /* copyArguments */);
-        final Pair<Path, DisplayCutout> result = new Pair<>(cutoutSpec.getPath(), cutout);
-        synchronized (CACHE_LOCK) {
-            sCachedSpec = spec;
-            sCachedDisplayWidth = displayWidth;
-            sCachedDisplayHeight = displayHeight;
-            sCachedDensity = density;
-            sCachedCutout = result;
-            sCachedWaterfallInsets = waterfallInsets;
-            sCachedPhysicalPixelDisplaySizeRatio = physicalPixelDisplaySizeRatio;
-        }
-        return result;
+        // synchronized (CACHE_LOCK) {
+        //     if (spec.equals(sCachedSpec) && sCachedDisplayWidth == displayWidth
+        //             && sCachedDisplayHeight == displayHeight
+        //             && sCachedDensity == density
+        //             && waterfallInsets.equals(sCachedWaterfallInsets)
+        //             && sCachedPhysicalPixelDisplaySizeRatio == physicalPixelDisplaySizeRatio) {
+        //         return sCachedCutout;
+        //     }
+        // }
+
+        // spec = spec.trim();
+
+        // CutoutSpecification cutoutSpec = new CutoutSpecification.Parser(density,
+        //         physicalDisplayWidth, physicalDisplayHeight, physicalPixelDisplaySizeRatio)
+        //         .parse(spec);
+        // Rect safeInset = cutoutSpec.getSafeInset();
+        // final Rect boundLeft = cutoutSpec.getLeftBound();
+        // final Rect boundTop = cutoutSpec.getTopBound();
+        // final Rect boundRight = cutoutSpec.getRightBound();
+        // final Rect boundBottom = cutoutSpec.getBottomBound();
+
+
+        // if (!waterfallInsets.equals(Insets.NONE)) {
+        //     safeInset.set(
+        //             Math.max(waterfallInsets.left, safeInset.left),
+        //             Math.max(waterfallInsets.top, safeInset.top),
+        //             Math.max(waterfallInsets.right, safeInset.right),
+        //             Math.max(waterfallInsets.bottom, safeInset.bottom));
+        // }
+
+        // final CutoutPathParserInfo cutoutPathParserInfo = new CutoutPathParserInfo(
+        //         displayWidth, displayHeight, physicalDisplayWidth, physicalDisplayHeight, density,
+        //         pathSpec.trim(), ROTATION_0, 1f /* scale */, physicalPixelDisplaySizeRatio);
+
+        // final DisplayCutout cutout = new DisplayCutout(
+        //         safeInset, waterfallInsets, boundLeft, boundTop, boundRight, boundBottom,
+        //         cutoutPathParserInfo , false /* copyArguments */);
+        // final Pair<Path, DisplayCutout> result = new Pair<>(cutoutSpec.getPath(), cutout);
+        // synchronized (CACHE_LOCK) {
+        //     sCachedSpec = spec;
+        //     sCachedDisplayWidth = displayWidth;
+        //     sCachedDisplayHeight = displayHeight;
+        //     sCachedDensity = density;
+        //     sCachedCutout = result;
+        //     sCachedWaterfallInsets = waterfallInsets;
+        //     sCachedPhysicalPixelDisplaySizeRatio = physicalPixelDisplaySizeRatio;
+        // }
+        // return result;
+
+        // "Car machine does not have a hole-punch display, so no cutout will be performed on the screen here."
+        return NULL_PAIR;
     }
 
     private static Insets loadWaterfallInset(Resources res) {
