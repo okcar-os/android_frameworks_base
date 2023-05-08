@@ -17,8 +17,8 @@
  */
 -->
 <resources>
-    <bool name="def_dim_screen">true</bool>
-    <integer name="def_screen_off_timeout">60000</integer>
+    <bool name="def_dim_screen">false</bool>
+    <integer name="def_screen_off_timeout">2147483647</integer>
     <integer name="def_sleep_timeout">-1</integer>
     <bool name="def_airplane_mode_on">false</bool>
     <bool name="def_theater_mode_on">false</bool>
@@ -82,7 +82,7 @@
     <integer name="def_max_sound_trigger_detection_service_ops_per_day" translatable="false">1000</integer>
     <integer name="def_sound_trigger_detection_service_op_timeout" translatable="false">15000</integer>
 
-    <bool name="def_lockscreen_disabled">false</bool>
+    <bool name="def_lockscreen_disabled">true</bool>
     <bool name="def_device_provisioned">false</bool>
     <integer name="def_dock_audio_media_enabled">1</integer>
 
@@ -111,7 +111,7 @@
     <bool name="def_accessibility_display_magnification_auto_update">true</bool>
 
     <!-- Default for Settings.System.USER_ROTATION -->
-    <integer name="def_user_rotation">0</integer>
+    <integer name="def_user_rotation">3</integer>
 
     <!-- Default for Settings.Secure.DOWNLOAD_MAX_BYTES_OVER_MOBILE. <=0 if no limit -->
     <integer name="def_download_manager_max_bytes_over_mobile">-1</integer>
@@ -320,4 +320,11 @@
 
     <!-- Whether vibrate icon is shown in the status bar by default. -->
     <integer name="def_statusBarVibrateIconEnabled">0</integer>
+
+
+    <!-- If Enable freeform windows -->
+    <integer name="def_enableFreeformSupport">1</integer>
+
+    <!-- If Force activities to be resizable -->
+    <integer name="def_forceResizableActivities">1</integer>
 </resources>

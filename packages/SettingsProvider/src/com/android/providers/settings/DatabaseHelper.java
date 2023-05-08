@@ -2546,6 +2546,12 @@ class DatabaseHelper extends SQLiteOpenHelper {
             // Set default cdma call auto retry
             loadSetting(stmt, Settings.Global.CALL_AUTO_RETRY, 0);
 
+            loadIntegerSetting(stmt, Settings.Global.DEVELOPMENT_ENABLE_FREEFORM_WINDOWS_SUPPORT,
+                    R.integer.def_enableFreeformSupport);
+                    
+            loadIntegerSetting(stmt, Settings.Global.DEVELOPMENT_FORCE_RESIZABLE_ACTIVITIES,
+                    R.integer.def_forceResizableActivities);
+
             // Set the preferred network mode to target desired value or Default
             // value defined in system property
             StringBuilder val = new StringBuilder();
