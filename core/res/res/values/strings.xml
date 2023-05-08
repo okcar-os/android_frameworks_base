@@ -3856,6 +3856,8 @@
     <!-- USB_PREFERENCES: Notification for when the user connects the phone to a computer via USB in PTP mode.  This is the title -->
     <string name="usb_ptp_notification_title">PTP via USB turned on</string>
     <!-- USB_PREFERENCES: Notification for when the user connects the phone to a computer via USB in Tethering mode.  This is the title -->
+    <string name="usb_okcar_notification_title">USB okcar turned on</string>
+    <!-- USB_PREFERENCES: Notification for when the user connects the phone to a computer via USB in Tethering mode.  This is the title -->
     <string name="usb_tether_notification_title">USB tethering turned on</string>
     <!-- USB_PREFERENCES: Notification for when the user connects the phone to a computer via USB in MIDI mode.  This is the title -->
     <string name="usb_midi_notification_title">MIDI via USB turned on</string>

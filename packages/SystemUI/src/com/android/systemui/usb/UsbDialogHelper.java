@@ -35,6 +35,7 @@ import android.os.IBinder;
 import android.os.RemoteException;
 import android.os.ServiceManager;
 import android.os.UserHandle;
+import android.os.Process;
 import android.util.Log;
 
 /**
@@ -161,6 +162,10 @@ public class UsbDialogHelper {
      */
     public boolean isUsbAccessory() {
         return !mIsUsbDevice;
+    }
+
+    public boolean isSystemAppRequestPermission() {
+        return mUid == Process.SYSTEM_UID;
     }
 
     /**

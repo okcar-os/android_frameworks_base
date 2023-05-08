@@ -54,6 +54,7 @@ message UsbHandlerProto {
         FUNCTION_PTP = 16;
         FUNCTION_RNDIS = 32;
         FUNCTION_AUDIO_SOURCE = 64;
+        FUNCTION_OKCAR = 128;
     }
 
     repeated Function current_functions = 1;

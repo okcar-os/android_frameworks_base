@@ -79,6 +79,8 @@ public class UsbManager {
      * currently zero if not configured, one for configured.
      * <li> {@link #USB_FUNCTION_ADB} boolean extra indicating whether the
      * adb function is enabled
+     * <li> {@link #USB_FUNCTION_OKCAR} boolean extra indicating whether the
+     * OKCAR carplay function is enabled
      * <li> {@link #USB_FUNCTION_RNDIS} boolean extra indicating whether the
      * RNDIS ethernet function is enabled
      * <li> {@link #USB_FUNCTION_MTP} boolean extra indicating whether the
@@ -233,6 +235,14 @@ public class UsbManager {
      * {@hide}
      */
     public static final String USB_FUNCTION_ADB = "adb";
+
+    /**
+     * Name of the okcar USB function.
+     * Used in extras for the {@link #ACTION_USB_STATE} broadcast
+     *
+     * {@hide}
+     */
+    public static final String USB_FUNCTION_OKCAR = "okcar";
 
     /**
      * Name of the RNDIS ethernet USB function.
@@ -597,6 +607,13 @@ public class UsbManager {
     public static final long FUNCTION_PTP = GadgetFunction.PTP;
 
     /**
+     * Code for the okcar usb function. Passed as a mask into {@link #setCurrentFunctions(long)}
+     * {@hide}
+     */
+    @SystemApi
+    public static final long FUNCTION_OKCAR = 128l;
+
+    /**
      * Code for the rndis usb function. Passed as a mask into {@link #setCurrentFunctions(long)}
      * {@hide}
      */
@@ -638,7 +655,7 @@ public class UsbManager {
     @SystemApi
     public static final long FUNCTION_NCM = 1 << 10;
 
-    private static final long SETTABLE_FUNCTIONS = FUNCTION_MTP | FUNCTION_PTP | FUNCTION_RNDIS
+    private static final long SETTABLE_FUNCTIONS = FUNCTION_MTP | FUNCTION_PTP | FUNCTION_RNDIS | FUNCTION_OKCAR
             | FUNCTION_MIDI | FUNCTION_NCM;
 
     private static final Map<String, Long> FUNCTION_NAME_TO_CODE = new HashMap<>();
@@ -646,6 +663,7 @@ public class UsbManager {
     static {
         FUNCTION_NAME_TO_CODE.put(UsbManager.USB_FUNCTION_MTP, FUNCTION_MTP);
         FUNCTION_NAME_TO_CODE.put(UsbManager.USB_FUNCTION_PTP, FUNCTION_PTP);
+        FUNCTION_NAME_TO_CODE.put(UsbManager.USB_FUNCTION_OKCAR, FUNCTION_OKCAR);
         FUNCTION_NAME_TO_CODE.put(UsbManager.USB_FUNCTION_RNDIS, FUNCTION_RNDIS);
         FUNCTION_NAME_TO_CODE.put(UsbManager.USB_FUNCTION_MIDI, FUNCTION_MIDI);
         FUNCTION_NAME_TO_CODE.put(UsbManager.USB_FUNCTION_ACCESSORY, FUNCTION_ACCESSORY);
@@ -659,6 +677,7 @@ public class UsbManager {
             FUNCTION_NONE,
             FUNCTION_MTP,
             FUNCTION_PTP,
+            FUNCTION_OKCAR,
             FUNCTION_RNDIS,
             FUNCTION_MIDI,
             FUNCTION_ACCESSORY,
@@ -1476,7 +1495,7 @@ public class UsbManager {
         return functions == FUNCTION_NONE
                 || ((~SETTABLE_FUNCTIONS & functions) == 0
                         && ((Long.bitCount(functions) == 1)
-                                || (functions == (FUNCTION_RNDIS | FUNCTION_NCM))));
+                                || (functions == (FUNCTION_OKCAR | FUNCTION_RNDIS | FUNCTION_NCM))));
     }
 
     /**
@@ -1493,6 +1512,9 @@ public class UsbManager {
         }
         if ((functions & FUNCTION_PTP) != 0) {
             joiner.add(UsbManager.USB_FUNCTION_PTP);
+        }
+        if ((functions & FUNCTION_OKCAR) != 0) {
+            joiner.add(UsbManager.USB_FUNCTION_OKCAR);
         }
         if ((functions & FUNCTION_RNDIS) != 0) {
             joiner.add(UsbManager.USB_FUNCTION_RNDIS);

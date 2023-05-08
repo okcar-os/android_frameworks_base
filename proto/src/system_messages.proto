@@ -383,6 +383,10 @@ message SystemMessage {
     // package: android
     NOTE_A11Y_VIEW_AND_CONTROL_ACCESS = 1005;
 
+    // Inform that USB is configured as a okcar
+    // Package: android
+    NOTE_USB_OKCAR =1006;
+
     // Notify the user an abusive background app has been detected.
     // Package: android
     // Note: this is a base ID, multiple notifications will be posted for each

@@ -44,6 +44,15 @@ public class UsbPermissionActivity extends UsbDialogActivity {
     @Override
     protected void onResume() {
         super.onResume();
+
+        if (mDialogHelper.isSystemAppRequestPermission()) {
+            // System apps are granted permission directly, without prompting the user with a pop-up window.
+            mDialogHelper.grantUidAccessPermission();            
+            mPermissionGranted = true;
+
+            finish();
+            return;
+        }
         final boolean useRecordWarning = mDialogHelper.isUsbDevice()
                 && (mDialogHelper.deviceHasAudioCapture()
                 && !mDialogHelper.packageHasAudioRecordingPermission());

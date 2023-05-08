@@ -5234,6 +5234,9 @@ public class PackageManagerService implements PackageSender, TestUtilityService 
                         || actionName.startsWith("android.net.netmon.launchCaptivePortalApp")) {
                     return true;
                 }
+                if (actionName.startsWith("android.intent.action.pc.") || actionName.startsWith("pc.intent.action.pc.")) {
+                    return true;
+                }
             }
             // allow instant applications
             synchronized (mProtectedBroadcasts) {

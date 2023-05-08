@@ -252,7 +252,7 @@ public class UsbDeviceManager implements ActivityTaskManagerInternal.ScreenObser
 
             String state = event.get("USB_STATE");
             String accessory = event.get("ACCESSORY");
-
+            String pcp = event.get("PCCONNECT");
             if (state != null) {
                 mHandler.updateState(state);
             } else if ("GETPROTOCOL".equals(accessory)) {
@@ -268,6 +268,8 @@ public class UsbDeviceManager implements ActivityTaskManagerInternal.ScreenObser
                 mHandler.removeMessages(MSG_ACCESSORY_HANDSHAKE_TIMEOUT);
                 mHandler.setStartAccessoryTrue();
                 startAccessoryMode();
+            } else if ("ATTACHED".equals(pcp)) {
+                mContext.sendBroadcastAsUser(new Intent("android.intent.action.pc.PC_ATTACHED"), UserHandle.ALL);
             }
         }
     }
@@ -1287,6 +1289,9 @@ public class UsbDeviceManager implements ActivityTaskManagerInternal.ScreenObser
                 } else if (mCurrentFunctions == UsbManager.FUNCTION_MIDI) {
                     titleRes = com.android.internal.R.string.usb_midi_notification_title;
                     id = SystemMessage.NOTE_USB_MIDI;
+                } else if (mCurrentFunctions == UsbManager.FUNCTION_OKCAR) {
+                    titleRes = com.android.internal.R.string.usb_okcar_notification_title;
+                    id = SystemMessage.NOTE_USB_OKCAR;
                 } else if ((mCurrentFunctions == UsbManager.FUNCTION_RNDIS)
                         || (mCurrentFunctions == UsbManager.FUNCTION_NCM)) {
                     titleRes = com.android.internal.R.string.usb_tether_notification_title;
@@ -2238,19 +2243,33 @@ public class UsbDeviceManager implements ActivityTaskManagerInternal.ScreenObser
                     Slog.e(TAG, "setUsbConfig mGadgetProxy is null");
                     return;
                 }
-                try {
-                    if ((config & UsbManager.FUNCTION_ADB) != 0) {
-                        /**
-                         * Start adbd if ADB function is included in the configuration.
-                         */
-                        LocalServices.getService(AdbManagerInternal.class)
-                                .startAdbdForTransport(AdbTransportType.USB);
-                    } else {
-                        /**
-                         * Stop adbd otherwise
-                         */
+                try {                    
+                    if ((config & UsbManager.FUNCTION_OKCAR) != 0 ) {
+                        // okcar incompatible usb adb
                         LocalServices.getService(AdbManagerInternal.class)
                                 .stopAdbdForTransport(AdbTransportType.USB);
+                        
+                        if ( Settings.Global.getInt(mContentResolver, Settings.Global.ADB_WIFI_ENABLED, 0) == 1 ) {
+                            LocalServices.getService(AdbManagerInternal.class)
+                                .startAdbdForTransport(AdbTransportType.WIFI);
+                        } else {
+                            LocalServices.getService(AdbManagerInternal.class)
+                                .stopAdbdForTransport(AdbTransportType.WIFI);
+                        }
+                    } else {                        
+                        if ((config & UsbManager.FUNCTION_ADB) != 0) {
+                            /**
+                             * Start adbd if ADB function is included in the configuration.
+                             */
+                            LocalServices.getService(AdbManagerInternal.class)
+                                    .startAdbdForTransport(AdbTransportType.USB);
+                        } else {
+                            /**
+                             * Stop adbd otherwise
+                             */                    
+                            LocalServices.getService(AdbManagerInternal.class)
+                                    .stopAdbdForTransport(AdbTransportType.USB);
+                        }
                     }
                     UsbGadgetCallback usbGadgetCallback = new UsbGadgetCallback(mCurrentRequest,
                             config, chargingFunctions);
@@ -2381,6 +2400,8 @@ public class UsbDeviceManager implements ActivityTaskManagerInternal.ScreenObser
             MetricsLogger.action(mContext, MetricsEvent.ACTION_USB_CONFIG_PTP);
         } else if (functions == UsbManager.FUNCTION_MIDI) {
             MetricsLogger.action(mContext, MetricsEvent.ACTION_USB_CONFIG_MIDI);
+        } else if (functions == UsbManager.FUNCTION_OKCAR) {
+            MetricsLogger.action(mContext, MetricsEvent.ACTION_USB_CONFIG_OKCAR);
         } else if (functions == UsbManager.FUNCTION_RNDIS) {
             MetricsLogger.action(mContext, MetricsEvent.ACTION_USB_CONFIG_RNDIS);
         } else if (functions == UsbManager.FUNCTION_ACCESSORY) {
