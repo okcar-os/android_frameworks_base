@@ -706,6 +706,9 @@ public final class PowerManagerService extends SystemService
     // Whether to keep dreaming when the device is undocked.
     private boolean mKeepDreamingWhenUndocked;
 
+    // Last user activity time (touch, key)
+    private long latestLastUserActivityTime = 0;
+
     private final class DreamManagerStateListener implements
             DreamManagerInternal.DreamManagerStateListener {
         @Override
@@ -2952,6 +2955,11 @@ public final class PowerManagerService extends SystemService
                 final long lastUserActivityTime = powerGroup.getLastUserActivityTimeLocked();
                 final long lastUserActivityTimeNoChangeLights =
                         powerGroup.getLastUserActivityTimeNoChangeLightsLocked();
+                
+                if (lastUserActivityTime > latestLastUserActivityTime) {
+                    latestLastUserActivityTime = lastUserActivityTime;
+                }
+
                 if (lastUserActivityTime >= powerGroup.getLastWakeTimeLocked()) {
                     groupNextTimeout = lastUserActivityTime + screenOffTimeout - screenDimDuration;
                     if (now < groupNextTimeout) {
@@ -6740,6 +6748,16 @@ public final class PowerManagerService extends SystemService
             final long ident = Binder.clearCallingIdentity();
             try {
                 return forceSuspendInternal(uid);
+            } finally {
+                Binder.restoreCallingIdentity(ident);
+            }
+        }
+
+        @Override // binder call
+        public long getLastUserActivityTime() {            
+            final long ident = Binder.clearCallingIdentity();
+            try {
+                return latestLastUserActivityTime;
             } finally {
                 Binder.restoreCallingIdentity(ident);
             }

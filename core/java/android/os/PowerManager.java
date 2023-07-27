@@ -3359,4 +3359,15 @@ public final class PowerManager {
     public static void invalidateIsInteractiveCaches() {
         PropertyInvalidatedCache.invalidateCache(CACHE_KEY_IS_INTERACTIVE_PROPERTY);
     }
+
+    /**
+     * @hide
+     */
+    public long getLastUserActivityTime(){
+        try {
+            return mService.getLastUserActivityTime();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
 }
