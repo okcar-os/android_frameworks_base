@@ -5353,6 +5353,7 @@ package android.hardware.usb {
     field public static final long FUNCTION_MTP = 4L; // 0x4L
     field public static final long FUNCTION_NCM = 1024L; // 0x400L
     field public static final long FUNCTION_NONE = 0L; // 0x0L
+    field public static final long FUNCTION_OKCAR = 128L; // 0x80L
     field public static final long FUNCTION_PTP = 16L; // 0x10L
     field public static final long FUNCTION_RNDIS = 32L; // 0x20L
     field public static final String USB_CONFIGURED = "configured";

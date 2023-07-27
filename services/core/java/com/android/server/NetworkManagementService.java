@@ -70,6 +70,7 @@ import android.os.ServiceManager;
 import android.os.ServiceSpecificException;
 import android.os.StrictMode;
 import android.os.SystemClock;
+import android.os.SystemProperties;
 import android.os.Trace;
 import android.text.TextUtils;
 import android.util.Log;
@@ -613,6 +614,10 @@ public class NetworkManagementService extends INetworkManagementService.Stub {
         @Override
         public void onInterfaceAdded(String ifName) throws RemoteException {
             mDaemonHandler.post(() -> notifyInterfaceAdded(ifName));
+            if (ifName != null && ifName.equals("usb0")) {
+                Slog.i(TAG, "onInterfaceAdded usb0 added, call setInterfaceUp()");
+                setInterfaceUp(ifName);
+            }
         }
 
         @Override
@@ -630,6 +635,10 @@ public class NetworkManagementService extends INetworkManagementService.Stub {
         public void onInterfaceLinkStateChanged(String ifName, boolean up)
                 throws RemoteException {
             mDaemonHandler.post(() -> notifyInterfaceLinkStateChanged(ifName, up));
+            if (ifName != null && ifName.equals("usb0") && up) {
+                Slog.i(TAG, "onInterfaceLinkStateChanged: usb0 up");
+                SystemProperties.set("vendor.pc.pccall", "i1");
+            }
         }
 
         @Override

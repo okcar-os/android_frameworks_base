@@ -254,6 +254,9 @@ public class UsbDeviceManager implements ActivityTaskManagerInternal.ScreenObser
             String accessory = event.get("ACCESSORY");
             String pcp = event.get("PCCONNECT");
             if (state != null) {
+                if ("DISCONNECTED".equals(state)) {
+                    mContext.sendBroadcastAsUser(new Intent("android.intent.action.pc.PC_USB_STATE_DISCONNECTED"), UserHandle.ALL);
+                }
                 mHandler.updateState(state);
             } else if ("GETPROTOCOL".equals(accessory)) {
                 if (DEBUG) Slog.d(TAG, "got accessory get protocol");
@@ -268,8 +271,10 @@ public class UsbDeviceManager implements ActivityTaskManagerInternal.ScreenObser
                 mHandler.removeMessages(MSG_ACCESSORY_HANDSHAKE_TIMEOUT);
                 mHandler.setStartAccessoryTrue();
                 startAccessoryMode();
-            } else if ("ATTACHED".equals(pcp)) {
+            } else if ("ACCESSOTY_ATTACHED".equals(pcp)) {
                 mContext.sendBroadcastAsUser(new Intent("android.intent.action.pc.PC_ATTACHED"), UserHandle.ALL);
+            } else if ("HID_IAP2_START".equals(pcp)) {
+                mContext.sendBroadcastAsUser(new Intent("android.intent.action.pc.PC_HID_IAP_START"), UserHandle.ALL);
             }
         }
     }

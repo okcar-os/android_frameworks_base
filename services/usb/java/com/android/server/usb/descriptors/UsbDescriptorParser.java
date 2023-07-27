@@ -355,7 +355,12 @@ public final class UsbDescriptorParser {
      * @hide
      */
     public String getDescriptorString(int stringId) {
-        return getDescriptorString_native(mDeviceAddr, stringId);
+        /**
+         * Excessive use of getString on some Accessory(Volkswagen 275) host prior to IAP2 can result in not receiving the Iap2 Detect Sequence Message.
+         */
+        // return getDescriptorString_native(mDeviceAddr, stringId);
+        Log.w(TAG, "try getDescriptorString(:" + stringId + ") okcar skiped");
+        return "";
     }
 
     private native String getDescriptorString_native(String deviceAddr, int stringId);
