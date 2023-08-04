@@ -66,6 +66,11 @@
     <item msgid="5776427577477729185">"已關閉"</item>
     <item msgid="7105052717007227415">"已開啟"</item>
   </string-array>
+  <string-array name="tile_states_rotation_toggle">
+    <item>"無法使用"</item>
+    <item>"豎屏"</item>
+    <item>"橫屏"</item>
+  </string-array>
   <string-array name="tile_states_bt">
     <item msgid="5330252067413512277">"無法使用"</item>
     <item msgid="5315121904534729843">"已關閉"</item>

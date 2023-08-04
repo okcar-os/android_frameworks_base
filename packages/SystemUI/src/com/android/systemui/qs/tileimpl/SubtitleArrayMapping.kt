@@ -28,6 +28,7 @@ object SubtitleArrayMapping {
         subtitleIdsMap["dnd"] = R.array.tile_states_dnd
         subtitleIdsMap["flashlight"] = R.array.tile_states_flashlight
         subtitleIdsMap["rotation"] = R.array.tile_states_rotation
+        subtitleIdsMap["rotation_toggle"] = R.array.tile_states_rotation_toggle
         subtitleIdsMap["bt"] = R.array.tile_states_bt
         subtitleIdsMap["airplane"] = R.array.tile_states_airplane
         subtitleIdsMap["location"] = R.array.tile_states_location

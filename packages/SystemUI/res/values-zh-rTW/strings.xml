@@ -32,6 +32,7 @@
     <string name="battery_saver_start_action" msgid="8353766979886287140">"開啟"</string>
     <string name="battery_saver_dismiss_action" msgid="7199342621040014738">"不用了，謝謝"</string>
     <string name="status_bar_settings_auto_rotation" msgid="8329080442278431708">"自動旋轉螢幕"</string>
+    <string name="status_bar_settings_rotation_toggle">"橫豎屏切換"</string>
     <string name="usb_device_permission_prompt" msgid="4414719028369181772">"要允許「<xliff:g id="APPLICATION">%1$s</xliff:g>」存取「<xliff:g id="USB_DEVICE">%2$s</xliff:g>」嗎？"</string>
     <string name="usb_device_permission_prompt_warn" msgid="2309129784984063656">"要允許「<xliff:g id="APPLICATION">%1$s</xliff:g>」存取「<xliff:g id="USB_DEVICE">%2$s</xliff:g>」嗎？\n這個應用程式未取得錄製權限，但可以透過這部 USB 裝置錄製音訊。"</string>
     <string name="usb_audio_device_permission_prompt_title" msgid="4221351137250093451">"要允許「<xliff:g id="APPLICATION">%1$s</xliff:g>」存取「<xliff:g id="USB_DEVICE">%2$s</xliff:g>」嗎？"</string>

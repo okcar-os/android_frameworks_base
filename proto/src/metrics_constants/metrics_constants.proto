@@ -7440,7 +7440,14 @@ message MetricsEvent {
 
     // ACTION: Usb config has been changed to okcar
     // CATEGORY: SETTINGS
-    // OS: P
+    // OS: OKCAR 1.0
     ACTION_USB_CONFIG_OKCAR =1751;
+
+    // OPEN: QS RotationToggle tile shown
+    // ACTION: QS RotationToggle tile tapped
+    //  SUBTYPE: 0 is Portrait, 1 is Landscape
+    // CATEGORY: QUICK_SETTINGS
+    // OS: OKCAR 1.0
+    QS_ROTATIONTOGGLE = 1752;
   }
 }

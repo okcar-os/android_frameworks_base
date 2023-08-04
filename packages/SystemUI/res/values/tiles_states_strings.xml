@@ -105,6 +105,12 @@
         <item>On</item>
     </string-array>
 
+    <string-array name="tile_states_rotation_toggle">
+        <item>Unavailable</item>        
+        <item>Portrait</item>
+        <item>Landscape</item>
+    </string-array>
+
     <!-- State names for bt (bluetooth) tile: unavailable, off, on.
          This subtitle is shown when the tile is in that particular state but does not set its own
          subtitle, so some of these may never appear on screen. They should still be translated as

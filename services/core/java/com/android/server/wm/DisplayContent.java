@@ -165,6 +165,7 @@ import android.annotation.Nullable;
 import android.app.ActivityManager;
 import android.app.ActivityManagerInternal;
 import android.content.ComponentName;
+import android.content.ContentResolver;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
 import android.content.pm.ActivityInfo.ScreenOrientation;
@@ -2771,7 +2772,13 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
         // }
 
         // return orientation;
-        // Force all apps to display in landscape mode
+        final ContentResolver resolver = mWmService.mContext.getContentResolver();
+        int mUserRotation = Settings.System.getIntForUser(resolver,
+                    Settings.System.USER_ROTATION, Surface.ROTATION_270,
+                    UserHandle.USER_CURRENT);
+        if (mUserRotation == 0 || mUserRotation == 2) {
+            return ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
+        }
         return ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
     }
 

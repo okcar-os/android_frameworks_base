@@ -275,6 +275,7 @@ import android.app.servertransaction.TransferSplashScreenViewStateItem;
 import android.app.usage.UsageEvents.Event;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.ContentResolver;
 import android.content.Intent;
 import android.content.LocusId;
 import android.content.pm.ActivityInfo;
@@ -304,6 +305,7 @@ import android.os.RemoteException;
 import android.os.SystemClock;
 import android.os.Trace;
 import android.os.UserHandle;
+import android.provider.Settings;
 import android.service.contentcapture.ActivityEvent;
 import android.service.dreams.DreamActivity;
 import android.service.voice.IVoiceInteractionSession;
@@ -323,6 +325,7 @@ import android.view.InputApplicationHandle;
 import android.view.RemoteAnimationAdapter;
 import android.view.RemoteAnimationDefinition;
 import android.view.RemoteAnimationTarget;
+import android.view.Surface;
 import android.view.Surface.Rotation;
 import android.view.SurfaceControl;
 import android.view.SurfaceControl.Transaction;
@@ -7932,6 +7935,13 @@ final class ActivityRecord extends WindowToken implements WindowManagerService.A
     int getRequestedOrientation() {
         // return mOrientation;
         // Force all apps to display in landscape mode
+        final ContentResolver resolver = mWmService.mContext.getContentResolver();
+        int mUserRotation = Settings.System.getIntForUser(resolver,
+                    Settings.System.USER_ROTATION, Surface.ROTATION_270,
+                    UserHandle.USER_CURRENT);
+        if (mUserRotation == 0 || mUserRotation == 2) {
+            return ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
+        }        
         return ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
     }
 

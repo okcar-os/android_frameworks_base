@@ -1372,9 +1372,10 @@ public class DisplayRotation {
         //         }
         //         return Surface.ROTATION_0;
         // }
-        if ( mUserRotation != Surface.ROTATION_90 && mUserRotation != Surface.ROTATION_270 ) {
-            return Surface.ROTATION_270;
-        }
+        final ContentResolver resolver = mContext.getContentResolver();
+        mUserRotation = Settings.System.getIntForUser(resolver,
+                    Settings.System.USER_ROTATION, Surface.ROTATION_270,
+                    UserHandle.USER_CURRENT);
         return mUserRotation;
     }
 
