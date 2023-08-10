@@ -18631,9 +18631,4 @@ public class ActivityManagerService extends IActivityManager.Stub
             Trace.traceBegin(traceTag, methodName + subInfo);
         }
     }
-
-    @Override
-    public int setFreeformWindowingMode(String packageName, boolean enter, int left, int top, int right, int bottom) {
-        return mActivityTaskManager.setFreeformWindowingMode(packageName, enter, left, top, right, bottom);
-    }
 }

@@ -760,6 +760,4 @@ interface IActivityManager {
      * </p>
      */
     int getBackgroundRestrictionExemptionReason(int uid);
-
-    int setFreeformWindowingMode(in String packageName, boolean enter, int left, int top, int right, int bottom);
 }

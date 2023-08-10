@@ -494,7 +494,6 @@ package android.app {
     method @RequiresPermission(android.Manifest.permission.KILL_UID) public void killUid(int, String);
     method @RequiresPermission(android.Manifest.permission.PACKAGE_USAGE_STATS) public void removeOnUidImportanceListener(android.app.ActivityManager.OnUidImportanceListener);
     method public void setDeviceLocales(@NonNull android.os.LocaleList);
-    method public int setFreeformWindowingMode(@NonNull String, boolean, int, int, int, int);
     method @RequiresPermission(android.Manifest.permission.RESTRICTED_VR_ACCESS) public static void setPersistentVrThread(int);
     method @RequiresPermission(anyOf={android.Manifest.permission.MANAGE_USERS, android.Manifest.permission.INTERACT_ACROSS_USERS_FULL}) public boolean startProfile(@NonNull android.os.UserHandle);
     method @RequiresPermission(anyOf={android.Manifest.permission.MANAGE_USERS, android.Manifest.permission.INTERACT_ACROSS_USERS_FULL}) public boolean stopProfile(@NonNull android.os.UserHandle);
