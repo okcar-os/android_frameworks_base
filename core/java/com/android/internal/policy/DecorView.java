@@ -72,6 +72,8 @@ import android.graphics.drawable.Drawable;
 import android.graphics.drawable.InsetDrawable;
 import android.graphics.drawable.LayerDrawable;
 import android.os.SystemClock;
+import android.os.Handler;
+import android.os.Message;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.util.Pair;
@@ -253,7 +255,7 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
     private DecorCaptionView mDecorCaptionView;
 
     private boolean decorCaptionViewVisible = false;
-    private long decorCaptionViewTriggerUpTime = 0;
+    private long latestTouchEventTime = 0;
 
     private boolean mWindowResizeCallbacksAdded = false;
     private Drawable.Callback mLastBackgroundDrawableCb = null;
@@ -526,18 +528,42 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
                 || y > (getHeight() + 5);
     }
 
+    private static final int HIDE_DECTOR_CAPTION = 1;
+    private Handler handler = new Handler(new Handler.Callback() {
+            @Override
+            public boolean handleMessage(Message message) {                
+                if (message.what == HIDE_DECTOR_CAPTION && decorCaptionViewVisible) {
+                    long curtime = SystemClock.uptimeMillis();
+
+                    if (curtime - latestTouchEventTime < 5000) {
+                        handler.removeMessages(HIDE_DECTOR_CAPTION);
+                        handler.sendEmptyMessageDelayed(HIDE_DECTOR_CAPTION, 10000);
+                    } else {
+                        final int windowingMode =
+                            getResources().getConfiguration().windowConfiguration.getWindowingMode();
+                        if (windowingMode == WindowConfiguration.WINDOWING_MODE_FREEFORM) {
+                            setDecorCaptionViewShow(false);                
+                        }
+                    }
+                }
+                return true;
+            }
+    });
+
     @Override
     public boolean onInterceptTouchEvent(MotionEvent event) {
         int action = event.getAction();
+        latestTouchEventTime = event.getEventTime();
 
-        if ( action == MotionEvent.ACTION_UP ) {
-            int y = (int) event.getY();
-            if ( y < dipToPx(50)) {
-                // Double-click the top of the window repeatedly to display DecorCaptionView
-                if ( !decorCaptionViewVisible && Math.abs(SystemClock.uptimeMillis() - decorCaptionViewTriggerUpTime) < 1000 ) {
+        if (action == MotionEvent.ACTION_DOWN) {
+            if (!decorCaptionViewVisible) {
+                final int windowingMode = getResources().getConfiguration().windowConfiguration.getWindowingMode();
+                if (windowingMode == WindowConfiguration.WINDOWING_MODE_FREEFORM) {
                     setDecorCaptionViewShow(true);
+                    handler.removeMessages(HIDE_DECTOR_CAPTION);
+                    handler.sendEmptyMessageDelayed(HIDE_DECTOR_CAPTION, 10000);
+
                 }
-                decorCaptionViewTriggerUpTime = event.getEventTime();
             }
         }
 
@@ -2293,7 +2319,7 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
             if (decorCaptionView == null) {
                 decorCaptionView = inflateDecorCaptionView(inflater);
             }
-            decorCaptionView.setPhoneWindow(mWindow, true /*showDecor*/);
+            decorCaptionView.setPhoneWindow(mWindow, false /*hideDecorDefault*/);
         } else {
             decorCaptionView = null;
         }
@@ -2353,6 +2379,8 @@ public class DecorView extends FrameLayout implements RootViewSurfaceTaker, Wind
                 R.drawable.decor_maximize_button_dark);
         view.findViewById(R.id.close_window).setBackgroundResource(
                 R.drawable.decor_close_button_dark);
+        view.findViewById(R.id.hide_caption).setBackgroundResource(
+                R.drawable.decor_hide_caption_dark);
     }
 
     /**
