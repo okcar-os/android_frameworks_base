@@ -752,18 +752,23 @@ class TaskLaunchParamsModifier implements LaunchParamsModifier {
                 layout, orientation, mTmpStableBounds);
         mTmpBounds.set(0, 0, defaultSize.getWidth(), defaultSize.getHeight());
         if (hasInitialBounds || sizeMatches(inOutBounds, mTmpBounds)) {
-            // We're here because either input parameters specified initial bounds, or the suggested
-            // bounds have the same size of the default freeform size. We should use the suggested
-            // bounds if possible -- so if app can handle the orientation we just use it, and if not
-            // we transpose the suggested bounds in-place.
-            if (orientation == orientationFromBounds(inOutBounds)) {
-                if (DEBUG) appendLog("freeform-size-orientation-match=" + inOutBounds);
-            } else {
-                // Meh, orientation doesn't match. Let's rotate inOutBounds in-place.
-                LaunchParamsUtil.centerBounds(displayArea, inOutBounds.height(),
-                        inOutBounds.width(), inOutBounds);
-                if (DEBUG) appendLog("freeform-orientation-mismatch=" + inOutBounds);
-            }
+            /**
+             * In-car displays are typically in landscape mode, so there's no need to readjust the bounds based on orientation here.
+             * If not commented out, the value set by activityOptions.setLaunchBounds(value) will be modified again.
+             *   */
+
+            // // We're here because either input parameters specified initial bounds, or the suggested
+            // // bounds have the same size of the default freeform size. We should use the suggested
+            // // bounds if possible -- so if app can handle the orientation we just use it, and if not
+            // // we transpose the suggested bounds in-place.
+            // if (orientation == orientationFromBounds(inOutBounds)) {
+            //     if (DEBUG) appendLog("freeform-size-orientation-match=" + inOutBounds);
+            // } else {
+            //     // Meh, orientation doesn't match. Let's rotate inOutBounds in-place.
+            //     LaunchParamsUtil.centerBounds(displayArea, inOutBounds.height(),
+            //             inOutBounds.width(), inOutBounds);
+            //     if (DEBUG) appendLog("freeform-orientation-mismatch=" + inOutBounds);
+            // }
         } else {
             // We are here either because there is no suggested bounds, or the suggested bounds is
             // a cascade from source activity. We should use the default freeform size and center it
@@ -778,7 +783,7 @@ class TaskLaunchParamsModifier implements LaunchParamsModifier {
         }
 
         // Lastly we adjust bounds to avoid conflicts with other tasks as much as possible.
-        adjustBoundsToAvoidConflictInDisplayArea(displayArea, inOutBounds);
+        // adjustBoundsToAvoidConflictInDisplayArea(displayArea, inOutBounds);
     }
 
     private int convertOrientationToScreenOrientation(int orientation) {
