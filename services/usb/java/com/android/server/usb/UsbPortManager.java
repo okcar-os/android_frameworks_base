@@ -865,6 +865,8 @@ public class UsbPortManager {
         // Once finished, the list of ports will only contain ports in DISPOSITION_READY.
         for (int i = mPorts.size(); i-- > 0; ) {
             final PortInfo portInfo = mPorts.valueAt(i);
+            sendPortChangedBroadcast(portInfo);
+
             switch (portInfo.mDisposition) {
                 case PortInfo.DISPOSITION_ADDED:
                     handlePortAddedLocked(portInfo, pw);
@@ -881,6 +883,19 @@ public class UsbPortManager {
                     break;
             }
         }
+    }
+
+    private void sendPortChangedBroadcast(PortInfo portInfo) {
+        final Intent intent = new Intent("android.intent.action.pc.USB_CHANGED");
+        intent.addFlags(
+                Intent.FLAG_RECEIVER_FOREGROUND |
+                        Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND);
+        intent.putExtra(UsbManager.EXTRA_PORT, ParcelableUsbPort.of(portInfo.mUsbPort));
+        intent.putExtra(UsbManager.EXTRA_PORT_STATUS, portInfo.mUsbPortStatus);
+        // Guard against possible reentrance by posting the broadcast from the handler
+        // instead of from within the critical section.
+        mHandler.post(() -> mContext.sendBroadcastAsUser(intent, UserHandle.ALL,
+                Manifest.permission.MANAGE_USB));
     }
 
     // Must only be called by updatePortsLocked.
