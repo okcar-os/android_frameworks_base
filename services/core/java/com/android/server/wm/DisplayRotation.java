@@ -447,6 +447,10 @@ public class DisplayRotation {
         if (newOrientation == mLastOrientation && !forceUpdate) {
             return false;
         }
+
+        if (!isDefaultDisplay && newOrientation == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) {
+            newOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR;
+        }
         mLastOrientation = newOrientation;
         if (newOrientation != mCurrentAppOrientation) {
             mCurrentAppOrientation = newOrientation;
@@ -532,7 +536,7 @@ public class DisplayRotation {
 
         final int oldRotation = mRotation;
         final int lastOrientation = mLastOrientation;
-        int rotation = rotationForOrientation(lastOrientation, oldRotation);
+        int rotation = rotationForOrientation(isDefaultDisplay ? lastOrientation : ActivityInfo.SCREEN_ORIENTATION_SENSOR, oldRotation);
         // Use the saved rotation for tabletop mode, if set.
         if (mFoldController != null && mFoldController.shouldRevertOverriddenRotation()) {
             int prevRotation = rotation;
@@ -1181,202 +1185,205 @@ public class DisplayRotation {
     @Surface.Rotation
     int rotationForOrientation(@ScreenOrientation int orientation,
             @Surface.Rotation int lastRotation) {
-        // if (isFixedToUserRotation()) {
-        //     return mUserRotation;
-        // }
+        if (isDefaultDisplay) {
+            final ContentResolver resolver = mContext.getContentResolver();
+            mUserRotation = Settings.System.getIntForUser(resolver,
+                        Settings.System.USER_ROTATION, Surface.ROTATION_270,
+                        UserHandle.USER_CURRENT);
+            return mUserRotation;
+        }
 
-        // int sensorRotation = mOrientationListener != null
-        //         ? mOrientationListener.getProposedRotation() // may be -1
-        //         : -1;
-        // if (mFoldController != null && mFoldController.shouldIgnoreSensorRotation()) {
-        //     sensorRotation = -1;
-        // }
-        // if (mDeviceStateController.shouldReverseRotationDirectionAroundZAxis()) {
-        //     // Flipping 270 and 90 has the same effect as changing the direction which rotation is
-        //     // applied.
-        //     if (sensorRotation == Surface.ROTATION_90) {
-        //         sensorRotation = Surface.ROTATION_270;
-        //     } else if (sensorRotation == Surface.ROTATION_270) {
-        //         sensorRotation = Surface.ROTATION_90;
-        //     }
-        // }
-        // mLastSensorRotation = sensorRotation;
-        // if (sensorRotation < 0) {
-        //     sensorRotation = lastRotation;
-        // }
+        if (isFixedToUserRotation()) {
+            return mUserRotation;
+        }
 
-        // final int lidState = mDisplayPolicy.getLidState();
-        // final int dockMode = mDisplayPolicy.getDockMode();
-        // final boolean hdmiPlugged = mDisplayPolicy.isHdmiPlugged();
-        // final boolean carDockEnablesAccelerometer =
-        //         mDisplayPolicy.isCarDockEnablesAccelerometer();
-        // final boolean deskDockEnablesAccelerometer =
-        //         mDisplayPolicy.isDeskDockEnablesAccelerometer();
-        // final boolean deskDockRespectsNoSensorAndLockedWithoutAccelerometer =
-        //         mDisplayPolicy.isDeskDockRespectsNoSensorAndLockedWithoutAccelerometer()
-        //                 && (orientation == ActivityInfo.SCREEN_ORIENTATION_LOCKED
-        //                         || orientation == ActivityInfo.SCREEN_ORIENTATION_NOSENSOR);
+        int sensorRotation = mOrientationListener != null
+                ? mOrientationListener.getProposedRotation() // may be -1
+                : -1;
+        if (mFoldController != null && mFoldController.shouldIgnoreSensorRotation()) {
+            sensorRotation = -1;
+        }
+        if (mDeviceStateController.shouldReverseRotationDirectionAroundZAxis()) {
+            // Flipping 270 and 90 has the same effect as changing the direction which rotation is
+            // applied.
+            if (sensorRotation == Surface.ROTATION_90) {
+                sensorRotation = Surface.ROTATION_270;
+            } else if (sensorRotation == Surface.ROTATION_270) {
+                sensorRotation = Surface.ROTATION_90;
+            }
+        }
+        mLastSensorRotation = sensorRotation;
+        if (sensorRotation < 0) {
+            sensorRotation = lastRotation;
+        }
 
-        // final int preferredRotation;
-        // if (!isDefaultDisplay) {
-        //     // For secondary displays we ignore things like displays sensors, docking mode and
-        //     // rotation lock, and always prefer user rotation.
-        //     preferredRotation = mUserRotation;
-        // } else if (lidState == LID_OPEN && mLidOpenRotation >= 0) {
-        //     // Ignore sensor when lid switch is open and rotation is forced.
-        //     preferredRotation = mLidOpenRotation;
-        // } else if (dockMode == Intent.EXTRA_DOCK_STATE_CAR
-        //         && (carDockEnablesAccelerometer || mCarDockRotation >= 0)) {
-        //     // Ignore sensor when in car dock unless explicitly enabled.
-        //     // This case can override the behavior of NOSENSOR, and can also
-        //     // enable 180 degree rotation while docked.
-        //     preferredRotation = carDockEnablesAccelerometer ? sensorRotation : mCarDockRotation;
-        // } else if ((dockMode == Intent.EXTRA_DOCK_STATE_DESK
-        //         || dockMode == Intent.EXTRA_DOCK_STATE_LE_DESK
-        //         || dockMode == Intent.EXTRA_DOCK_STATE_HE_DESK)
-        //         && (deskDockEnablesAccelerometer || mDeskDockRotation >= 0)
-        //         && !deskDockRespectsNoSensorAndLockedWithoutAccelerometer) {
-        //     // Ignore sensor when in desk dock unless explicitly enabled.
-        //     // This case can override the behavior of NOSENSOR, and can also
-        //     // enable 180 degree rotation while docked.
-        //     preferredRotation = deskDockEnablesAccelerometer ? sensorRotation : mDeskDockRotation;
-        // } else if (hdmiPlugged && mDemoHdmiRotationLock) {
-        //     // Ignore sensor when plugged into HDMI when demo HDMI rotation lock enabled.
-        //     // Note that the dock orientation overrides the HDMI orientation.
-        //     preferredRotation = mDemoHdmiRotation;
-        // } else if (hdmiPlugged && dockMode == Intent.EXTRA_DOCK_STATE_UNDOCKED
-        //         && mUndockedHdmiRotation >= 0) {
-        //     // Ignore sensor when plugged into HDMI and an undocked orientation has
-        //     // been specified in the configuration (only for legacy devices without
-        //     // full multi-display support).
-        //     // Note that the dock orientation overrides the HDMI orientation.
-        //     preferredRotation = mUndockedHdmiRotation;
-        // } else if (mDemoRotationLock) {
-        //     // Ignore sensor when demo rotation lock is enabled.
-        //     // Note that the dock orientation and HDMI rotation lock override this.
-        //     preferredRotation = mDemoRotation;
-        // } else if (mDisplayPolicy.isPersistentVrModeEnabled()) {
-        //     // While in VR, apps always prefer a portrait rotation. This does not change
-        //     // any apps that explicitly set landscape, but does cause sensors be ignored,
-        //     // and ignored any orientation lock that the user has set (this conditional
-        //     // should remain above the ORIENTATION_LOCKED conditional below).
-        //     preferredRotation = mPortraitRotation;
-        // } else if (orientation == ActivityInfo.SCREEN_ORIENTATION_LOCKED) {
-        //     // Application just wants to remain locked in the last rotation.
-        //     preferredRotation = lastRotation;
-        // } else if (!mSupportAutoRotation) {
-        //     // If we don't support auto-rotation then bail out here and ignore
-        //     // the sensor and any rotation lock settings.
-        //     preferredRotation = -1;
-        // } else if (((mUserRotationMode == WindowManagerPolicy.USER_ROTATION_FREE
-        //                     || isTabletopAutoRotateOverrideEnabled())
-        //                 && (orientation == ActivityInfo.SCREEN_ORIENTATION_USER
-        //                         || orientation == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        //                         || orientation == ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE
-        //                         || orientation == ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT
-        //                         || orientation == ActivityInfo.SCREEN_ORIENTATION_FULL_USER))
-        //         || orientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR
-        //         || orientation == ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
-        //         || orientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        //         || orientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT) {
-        //     // Otherwise, use sensor only if requested by the application or enabled
-        //     // by default for USER or UNSPECIFIED modes.  Does not apply to NOSENSOR.
-        //     boolean allowed = true;
-        //     if (orientation != ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
-        //             && orientation != ActivityInfo.SCREEN_ORIENTATION_FULL_USER) {
-        //         allowed = RotationPolicy.isRotationAllowed(sensorRotation,
-        //                 mUserRotationAngles, getAllowAllRotations() != ALLOW_ALL_ROTATIONS_DISABLED);
-        //     }
-        //     if (allowed) {
-        //         preferredRotation = sensorRotation;
-        //     } else {
-        //         preferredRotation = lastRotation;
-        //     }
-        // } else if (mUserRotationMode == WindowManagerPolicy.USER_ROTATION_LOCKED
-        //         && orientation != ActivityInfo.SCREEN_ORIENTATION_NOSENSOR
-        //         && orientation != ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-        //         && orientation != ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        //         && orientation != ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
-        //         && orientation != ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT) {
-        //     // Apply rotation lock. Does not apply to NOSENSOR or specific rotations.
-        //     // The idea is that the user rotation expresses a weak preference for the direction
-        //     // of gravity and as NOSENSOR is never affected by gravity, then neither should
-        //     // NOSENSOR be affected by rotation lock (although it will be affected by docks).
-        //     // Also avoid setting user rotation when app has preference over one particular rotation
-        //     // to avoid leaving the rotation to the reverse of it which has the compatible
-        //     // orientation, but isn't what app wants, when the user rotation is the reverse of the
-        //     // preferred rotation.
-        //     preferredRotation = mUserRotation;
-        // } else {
-        //     // No overriding preference.
-        //     // We will do exactly what the application asked us to do.
-        //     preferredRotation = -1;
-        // }
+        final int lidState = mDisplayPolicy.getLidState();
+        final int dockMode = mDisplayPolicy.getDockMode();
+        final boolean hdmiPlugged = mDisplayPolicy.isHdmiPlugged();
+        final boolean carDockEnablesAccelerometer =
+                mDisplayPolicy.isCarDockEnablesAccelerometer();
+        final boolean deskDockEnablesAccelerometer =
+                mDisplayPolicy.isDeskDockEnablesAccelerometer();
+        final boolean deskDockRespectsNoSensorAndLockedWithoutAccelerometer =
+                mDisplayPolicy.isDeskDockRespectsNoSensorAndLockedWithoutAccelerometer()
+                        && (orientation == ActivityInfo.SCREEN_ORIENTATION_LOCKED
+                                || orientation == ActivityInfo.SCREEN_ORIENTATION_NOSENSOR);
 
-        // switch (orientation) {
-        //     case ActivityInfo.SCREEN_ORIENTATION_PORTRAIT:
-        //         // Return portrait unless overridden.
-        //         if (isAnyPortrait(preferredRotation)) {
-        //             return preferredRotation;
-        //         }
-        //         return mPortraitRotation;
+        final int preferredRotation;
+        if (!isDefaultDisplay) {
+            // For secondary displays we ignore things like displays sensors, docking mode and
+            // rotation lock, and always prefer user rotation.
+            preferredRotation = mUserRotation;
+        } else if (lidState == LID_OPEN && mLidOpenRotation >= 0) {
+            // Ignore sensor when lid switch is open and rotation is forced.
+            preferredRotation = mLidOpenRotation;
+        } else if (dockMode == Intent.EXTRA_DOCK_STATE_CAR
+                && (carDockEnablesAccelerometer || mCarDockRotation >= 0)) {
+            // Ignore sensor when in car dock unless explicitly enabled.
+            // This case can override the behavior of NOSENSOR, and can also
+            // enable 180 degree rotation while docked.
+            preferredRotation = carDockEnablesAccelerometer ? sensorRotation : mCarDockRotation;
+        } else if ((dockMode == Intent.EXTRA_DOCK_STATE_DESK
+                || dockMode == Intent.EXTRA_DOCK_STATE_LE_DESK
+                || dockMode == Intent.EXTRA_DOCK_STATE_HE_DESK)
+                && (deskDockEnablesAccelerometer || mDeskDockRotation >= 0)
+                && !deskDockRespectsNoSensorAndLockedWithoutAccelerometer) {
+            // Ignore sensor when in desk dock unless explicitly enabled.
+            // This case can override the behavior of NOSENSOR, and can also
+            // enable 180 degree rotation while docked.
+            preferredRotation = deskDockEnablesAccelerometer ? sensorRotation : mDeskDockRotation;
+        } else if (hdmiPlugged && mDemoHdmiRotationLock) {
+            // Ignore sensor when plugged into HDMI when demo HDMI rotation lock enabled.
+            // Note that the dock orientation overrides the HDMI orientation.
+            preferredRotation = mDemoHdmiRotation;
+        } else if (hdmiPlugged && dockMode == Intent.EXTRA_DOCK_STATE_UNDOCKED
+                && mUndockedHdmiRotation >= 0) {
+            // Ignore sensor when plugged into HDMI and an undocked orientation has
+            // been specified in the configuration (only for legacy devices without
+            // full multi-display support).
+            // Note that the dock orientation overrides the HDMI orientation.
+            preferredRotation = mUndockedHdmiRotation;
+        } else if (mDemoRotationLock) {
+            // Ignore sensor when demo rotation lock is enabled.
+            // Note that the dock orientation and HDMI rotation lock override this.
+            preferredRotation = mDemoRotation;
+        } else if (mDisplayPolicy.isPersistentVrModeEnabled()) {
+            // While in VR, apps always prefer a portrait rotation. This does not change
+            // any apps that explicitly set landscape, but does cause sensors be ignored,
+            // and ignored any orientation lock that the user has set (this conditional
+            // should remain above the ORIENTATION_LOCKED conditional below).
+            preferredRotation = mPortraitRotation;
+        } else if (orientation == ActivityInfo.SCREEN_ORIENTATION_LOCKED) {
+            // Application just wants to remain locked in the last rotation.
+            preferredRotation = lastRotation;
+        } else if (!mSupportAutoRotation) {
+            // If we don't support auto-rotation then bail out here and ignore
+            // the sensor and any rotation lock settings.
+            preferredRotation = -1;
+        } else if (((mUserRotationMode == WindowManagerPolicy.USER_ROTATION_FREE
+                            || isTabletopAutoRotateOverrideEnabled())
+                        && (orientation == ActivityInfo.SCREEN_ORIENTATION_USER
+                                || orientation == ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                                || orientation == ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE
+                                || orientation == ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT
+                                || orientation == ActivityInfo.SCREEN_ORIENTATION_FULL_USER))
+                || orientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR
+                || orientation == ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+                || orientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                || orientation == ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT) {
+            // Otherwise, use sensor only if requested by the application or enabled
+            // by default for USER or UNSPECIFIED modes.  Does not apply to NOSENSOR.
+            boolean allowed = true;
+            if (orientation != ActivityInfo.SCREEN_ORIENTATION_FULL_SENSOR
+                    && orientation != ActivityInfo.SCREEN_ORIENTATION_FULL_USER) {
+                allowed = RotationPolicy.isRotationAllowed(sensorRotation,
+                        mUserRotationAngles, getAllowAllRotations() != ALLOW_ALL_ROTATIONS_DISABLED);
+            }
+            if (allowed) {
+                preferredRotation = sensorRotation;
+            } else {
+                preferredRotation = lastRotation;
+            }
+        } else if (mUserRotationMode == WindowManagerPolicy.USER_ROTATION_LOCKED
+                && orientation != ActivityInfo.SCREEN_ORIENTATION_NOSENSOR
+                && orientation != ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+                && orientation != ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+                && orientation != ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE
+                && orientation != ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT) {
+            // Apply rotation lock. Does not apply to NOSENSOR or specific rotations.
+            // The idea is that the user rotation expresses a weak preference for the direction
+            // of gravity and as NOSENSOR is never affected by gravity, then neither should
+            // NOSENSOR be affected by rotation lock (although it will be affected by docks).
+            // Also avoid setting user rotation when app has preference over one particular rotation
+            // to avoid leaving the rotation to the reverse of it which has the compatible
+            // orientation, but isn't what app wants, when the user rotation is the reverse of the
+            // preferred rotation.
+            preferredRotation = mUserRotation;
+        } else {
+            // No overriding preference.
+            // We will do exactly what the application asked us to do.
+            preferredRotation = -1;
+        }
 
-        //     case ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE:
-        //         // Return landscape unless overridden.
-        //         if (isLandscapeOrSeascape(preferredRotation)) {
-        //             return preferredRotation;
-        //         }
-        //         return mLandscapeRotation;
+        switch (orientation) {
+            case ActivityInfo.SCREEN_ORIENTATION_PORTRAIT:
+                // Return portrait unless overridden.
+                if (isAnyPortrait(preferredRotation)) {
+                    return preferredRotation;
+                }
+                return mPortraitRotation;
 
-        //     case ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT:
-        //         // Return reverse portrait unless overridden.
-        //         if (isAnyPortrait(preferredRotation)) {
-        //             return preferredRotation;
-        //         }
-        //         return mUpsideDownRotation;
+            case ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE:
+                // Return landscape unless overridden.
+                if (isLandscapeOrSeascape(preferredRotation)) {
+                    return preferredRotation;
+                }
+                return mLandscapeRotation;
 
-        //     case ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE:
-        //         // Return seascape unless overridden.
-        //         if (isLandscapeOrSeascape(preferredRotation)) {
-        //             return preferredRotation;
-        //         }
-        //         return mSeascapeRotation;
+            case ActivityInfo.SCREEN_ORIENTATION_REVERSE_PORTRAIT:
+                // Return reverse portrait unless overridden.
+                if (isAnyPortrait(preferredRotation)) {
+                    return preferredRotation;
+                }
+                return mUpsideDownRotation;
 
-        //     case ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE:
-        //     case ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE:
-        //         // Return either landscape rotation.
-        //         if (isLandscapeOrSeascape(preferredRotation)) {
-        //             return preferredRotation;
-        //         }
-        //         if (isLandscapeOrSeascape(lastRotation)) {
-        //             return lastRotation;
-        //         }
-        //         return mLandscapeRotation;
+            case ActivityInfo.SCREEN_ORIENTATION_REVERSE_LANDSCAPE:
+                // Return seascape unless overridden.
+                if (isLandscapeOrSeascape(preferredRotation)) {
+                    return preferredRotation;
+                }
+                return mSeascapeRotation;
 
-        //     case ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT:
-        //     case ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT:
-        //         // Return either portrait rotation.
-        //         if (isAnyPortrait(preferredRotation)) {
-        //             return preferredRotation;
-        //         }
-        //         if (isAnyPortrait(lastRotation)) {
-        //             return lastRotation;
-        //         }
-        //         return mPortraitRotation;
+            case ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE:
+            case ActivityInfo.SCREEN_ORIENTATION_USER_LANDSCAPE:
+                // Return either landscape rotation.
+                if (isLandscapeOrSeascape(preferredRotation)) {
+                    return preferredRotation;
+                }
+                if (isLandscapeOrSeascape(lastRotation)) {
+                    return lastRotation;
+                }
+                return mLandscapeRotation;
 
-        //     default:
-        //         // For USER, UNSPECIFIED, NOSENSOR, SENSOR and FULL_SENSOR,
-        //         // just return the preferred orientation we already calculated.
-        //         if (preferredRotation >= 0) {
-        //             return preferredRotation;
-        //         }
-        //         return Surface.ROTATION_0;
-        // }
-        final ContentResolver resolver = mContext.getContentResolver();
-        mUserRotation = Settings.System.getIntForUser(resolver,
-                    Settings.System.USER_ROTATION, Surface.ROTATION_270,
-                    UserHandle.USER_CURRENT);
-        return mUserRotation;
+            case ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT:
+            case ActivityInfo.SCREEN_ORIENTATION_USER_PORTRAIT:
+                // Return either portrait rotation.
+                if (isAnyPortrait(preferredRotation)) {
+                    return preferredRotation;
+                }
+                if (isAnyPortrait(lastRotation)) {
+                    return lastRotation;
+                }
+                return mPortraitRotation;
+
+            default:
+                // For USER, UNSPECIFIED, NOSENSOR, SENSOR and FULL_SENSOR,
+                // just return the preferred orientation we already calculated.
+                if (preferredRotation >= 0) {
+                    return preferredRotation;
+                }
+                return Surface.ROTATION_0;
+        }
     }
 
     private int getAllowAllRotations() {

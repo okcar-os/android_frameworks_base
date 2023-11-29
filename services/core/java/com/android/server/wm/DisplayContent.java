@@ -2721,65 +2721,68 @@ class DisplayContent extends RootDisplayArea implements WindowManagerPolicy.Disp
     @ScreenOrientation
     @Override
     int getOrientation() {
-        // if (mWmService.mDisplayFrozen) {
-        //     if (mWmService.mPolicy.isKeyguardLocked()) {
-        //         // Use the last orientation the while the display is frozen with the keyguard
-        //         // locked. This could be the keyguard forced orientation or from a SHOW_WHEN_LOCKED
-        //         // window. We don't want to check the show when locked window directly though as
-        //         // things aren't stable while the display is frozen, for example the window could be
-        //         // momentarily unavailable due to activity relaunch.
-        //         ProtoLog.v(WM_DEBUG_ORIENTATION,
-        //                 "Display id=%d is frozen while keyguard locked, return %d",
-        //                 mDisplayId, getLastOrientation());
-        //         return getLastOrientation();
-        //     }
-        // }
-
-        // if (mDisplayRotationCompatPolicy != null) {
-        //     int compatOrientation = mDisplayRotationCompatPolicy.getOrientation();
-        //     if (compatOrientation != SCREEN_ORIENTATION_UNSPECIFIED) {
-        //         mLastOrientationSource = null;
-        //         return compatOrientation;
-        //     }
-        // }
-
-        // final int orientation = super.getOrientation();
-
-        // if (!handlesOrientationChangeFromDescendant(orientation)) {
-        //     ActivityRecord topActivity = topRunningActivity(/* considerKeyguardState= */ true);
-        //     if (topActivity != null && topActivity.mLetterboxUiController
-        //             .shouldUseDisplayLandscapeNaturalOrientation()) {
-        //         ProtoLog.v(WM_DEBUG_ORIENTATION,
-        //                 "Display id=%d is ignoring orientation request for %d, return %d"
-        //                 + " following a per-app override for %s",
-        //                 mDisplayId, orientation, SCREEN_ORIENTATION_LANDSCAPE, topActivity);
-        //         return SCREEN_ORIENTATION_LANDSCAPE;
-        //     }
-        //     mLastOrientationSource = null;
-        //     // Return SCREEN_ORIENTATION_UNSPECIFIED so that Display respect sensor rotation
-        //     ProtoLog.v(WM_DEBUG_ORIENTATION,
-        //             "Display id=%d is ignoring orientation request for %d, return %d",
-        //             mDisplayId, orientation, SCREEN_ORIENTATION_UNSPECIFIED);
-        //     return SCREEN_ORIENTATION_UNSPECIFIED;
-        // }
-
-        // if (orientation == SCREEN_ORIENTATION_UNSET) {
-        //     // Return SCREEN_ORIENTATION_UNSPECIFIED so that Display respect sensor rotation
-        //     ProtoLog.v(WM_DEBUG_ORIENTATION,
-        //             "No app or window is requesting an orientation, return %d for display id=%d",
-        //             SCREEN_ORIENTATION_UNSPECIFIED, mDisplayId);
-        //     return SCREEN_ORIENTATION_UNSPECIFIED;
-        // }
-
-        // return orientation;
-        final ContentResolver resolver = mWmService.mContext.getContentResolver();
-        int mUserRotation = Settings.System.getIntForUser(resolver,
-                    Settings.System.USER_ROTATION, Surface.ROTATION_270,
-                    UserHandle.USER_CURRENT);
-        if (mUserRotation == 0 || mUserRotation == 2) {
-            return ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
+        if (isDefaultDisplay) {
+            final ContentResolver resolver = mWmService.mContext.getContentResolver();
+            int mUserRotation = Settings.System.getIntForUser(resolver,
+                        Settings.System.USER_ROTATION, Surface.ROTATION_270,
+                        UserHandle.USER_CURRENT);
+            if (mUserRotation == 0 || mUserRotation == 2) {
+                return ActivityInfo.SCREEN_ORIENTATION_PORTRAIT;
+            }
+            return ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
         }
-        return ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
+
+        if (mWmService.mDisplayFrozen) {
+            if (mWmService.mPolicy.isKeyguardLocked()) {
+                // Use the last orientation the while the display is frozen with the keyguard
+                // locked. This could be the keyguard forced orientation or from a SHOW_WHEN_LOCKED
+                // window. We don't want to check the show when locked window directly though as
+                // things aren't stable while the display is frozen, for example the window could be
+                // momentarily unavailable due to activity relaunch.
+                ProtoLog.v(WM_DEBUG_ORIENTATION,
+                        "Display id=%d is frozen while keyguard locked, return %d",
+                        mDisplayId, getLastOrientation());
+                return getLastOrientation();
+            }
+        }
+
+        if (mDisplayRotationCompatPolicy != null) {
+            int compatOrientation = mDisplayRotationCompatPolicy.getOrientation();
+            if (compatOrientation != SCREEN_ORIENTATION_UNSPECIFIED) {
+                mLastOrientationSource = null;
+                return compatOrientation;
+            }
+        }
+
+        final int orientation = super.getOrientation();
+
+        if (!handlesOrientationChangeFromDescendant(orientation)) {
+            ActivityRecord topActivity = topRunningActivity(/* considerKeyguardState= */ true);
+            if (topActivity != null && topActivity.mLetterboxUiController
+                    .shouldUseDisplayLandscapeNaturalOrientation()) {
+                ProtoLog.v(WM_DEBUG_ORIENTATION,
+                        "Display id=%d is ignoring orientation request for %d, return %d"
+                        + " following a per-app override for %s",
+                        mDisplayId, orientation, SCREEN_ORIENTATION_LANDSCAPE, topActivity);
+                return SCREEN_ORIENTATION_LANDSCAPE;
+            }
+            mLastOrientationSource = null;
+            // Return SCREEN_ORIENTATION_UNSPECIFIED so that Display respect sensor rotation
+            ProtoLog.v(WM_DEBUG_ORIENTATION,
+                    "Display id=%d is ignoring orientation request for %d, return %d",
+                    mDisplayId, orientation, SCREEN_ORIENTATION_UNSPECIFIED);
+            return SCREEN_ORIENTATION_UNSPECIFIED;
+        }
+
+        if (orientation == SCREEN_ORIENTATION_UNSET) {
+            // Return SCREEN_ORIENTATION_UNSPECIFIED so that Display respect sensor rotation
+            ProtoLog.v(WM_DEBUG_ORIENTATION,
+                    "No app or window is requesting an orientation, return %d for display id=%d",
+                    SCREEN_ORIENTATION_UNSPECIFIED, mDisplayId);
+            return SCREEN_ORIENTATION_UNSPECIFIED;
+        }
+
+        return orientation;
     }
 
     void updateDisplayInfo() {
