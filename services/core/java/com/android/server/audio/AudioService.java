@@ -9572,6 +9572,14 @@ public class AudioService extends IAudioService.Stub
             return AudioManager.AUDIOFOCUS_REQUEST_FAILED;
         }
         mmi.record();
+
+        try {
+            Intent iBroad = new Intent("pc.intent.action.pc.requestAudioFocusCalled");
+            iBroad.putExtra("durationHint", durationHint);
+            mContext.sendBroadcast(iBroad);
+        } catch ( Exception e ){
+            Log.e(TAG, "failed send requestAudioFocusCalled:" + e.getMessage());
+        }
         return mMediaFocusControl.requestAudioFocus(aa, durationHint, cb, fd,
                 clientId, callingPackageName, attributionTag, flags, sdk,
                 forceFocusDuckingForAccessibility(aa, durationHint, uid), -1 /*testUid, ignored*/);
