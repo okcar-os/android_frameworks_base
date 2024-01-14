@@ -892,6 +892,7 @@ public class UsbPortManager {
                         Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND);
         intent.putExtra(UsbManager.EXTRA_PORT, ParcelableUsbPort.of(portInfo.mUsbPort));
         intent.putExtra(UsbManager.EXTRA_PORT_STATUS, portInfo.mUsbPortStatus);
+        intent.putExtra("Disposition", portInfo.mDisposition);
         // Guard against possible reentrance by posting the broadcast from the handler
         // instead of from within the critical section.
         mHandler.post(() -> mContext.sendBroadcastAsUser(intent, UserHandle.ALL,
