@@ -25,8 +25,11 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.TypedArray;
+import android.database.ContentObserver;
 import android.graphics.Rect;
+import android.icu.lang.UCharacter;
 import android.icu.text.DateTimePatternGenerator;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Parcelable;
@@ -39,13 +42,19 @@ import android.text.format.DateFormat;
 import android.text.style.CharacterStyle;
 import android.text.style.RelativeSizeSpan;
 import android.util.AttributeSet;
+import android.util.TypedValue;
+import android.view.ContextThemeWrapper;
 import android.view.Display;
 import android.view.View;
+import android.view.ViewGroup;
 import android.widget.TextView;
 
+import androidx.annotation.Nullable;
+
+import com.android.settingslib.Utils;
 import com.android.systemui.Dependency;
 import com.android.systemui.FontSizeUtils;
-import com.android.systemui.R;
+import com.android.systemui.res.R;
 import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.demomode.DemoModeCommandReceiver;
 import com.android.systemui.plugins.DarkIconDispatcher;
@@ -111,6 +120,7 @@ public class Clock extends TextView implements
     private static final int AM_PM_STYLE_GONE    = 2;
 
     private int mAmPmStyle = AM_PM_STYLE_GONE;
+    private ContentObserver mContentObserver;
     private boolean mShowSeconds;
     private Handler mSecondsHandler;
 
@@ -148,7 +158,30 @@ public class Clock extends TextView implements
                 R.styleable.Clock,
                 0, 0);
         try {
-            mAmPmStyle = a.getInt(R.styleable.Clock_amPmStyle, mAmPmStyle);
+            mAmPmStyle = LineageSettings.System.getInt(mContext.getContentResolver(),
+                    LineageSettings.System.STATUS_BAR_AM_PM, AM_PM_STYLE_GONE);
+            mContentObserver = new ContentObserver(null) {
+                @Override
+                public void onChange(boolean selfChange, Uri uri) {
+                    if (LineageSettings.System.getUriFor(
+                            LineageSettings.System.STATUS_BAR_AM_PM).equals(uri)) {
+                        mAmPmStyle = LineageSettings.System.getInt(
+                                mContext.getContentResolver(),
+                                LineageSettings.System.STATUS_BAR_AM_PM, AM_PM_STYLE_GONE);
+                        // Force refresh of dependent variables.
+                        mContentDescriptionFormatString = "";
+                        mDateTimePatternGenerator = null;
+                        mContext.getMainExecutor().execute(() -> {
+                            updateClock(true);
+                        });
+                    } else if (LineageSettings.System.getUriFor(
+                            LineageSettings.System.STATUS_BAR_CLOCK_AUTO_HIDE).equals(uri)) {
+                        handleTaskStackListener(
+                                LineageSettings.System.getInt(mContext.getContentResolver(),
+                                        LineageSettings.System.STATUS_BAR_CLOCK_AUTO_HIDE, 0) != 0);
+                    }
+                }
+            };
             mIsStatusBar = a.getBoolean(R.styleable.Clock_isStatusBar, mIsStatusBar);
             mNonAdaptedColor = getCurrentTextColor();
         } finally {
@@ -156,6 +189,8 @@ public class Clock extends TextView implements
         }
         mBroadcastDispatcher = Dependency.get(BroadcastDispatcher.class);
         mUserTracker = Dependency.get(UserTracker.class);
+
+        setIncludeFontPadding(false);
     }
 
     @Override
@@ -210,8 +245,16 @@ public class Clock extends TextView implements
             // The receiver will return immediately if the view does not have a Handler yet.
             mBroadcastDispatcher.registerReceiverWithHandler(mIntentReceiver, filter,
                     Dependency.get(Dependency.TIME_TICK_HANDLER), UserHandle.ALL);
-            Dependency.get(TunerService.class).addTunable(this,
-                    CLOCK_AUTO_HIDE, CLOCK_SECONDS, CLOCK_STYLE);
+            Dependency.get(TunerService.class).addTunable(this, CLOCK_SECONDS);
+            mContext.getContentResolver().registerContentObserver(
+                    LineageSettings.System.getUriFor(LineageSettings.System.STATUS_BAR_AM_PM),
+                    false, mContentObserver);
+            mContext.getContentResolver().registerContentObserver(
+                    LineageSettings.System.getUriFor(
+                            LineageSettings.System.STATUS_BAR_CLOCK_AUTO_HIDE),
+                    false, mContentObserver);
+            mContentObserver.onChange(false, LineageSettings.System.getUriFor(
+                    LineageSettings.System.STATUS_BAR_CLOCK_AUTO_HIDE));
             mCommandQueue.addCallback(this);
             mUserTracker.addCallback(mUserChangedCallback, mContext.getMainExecutor());
             mCurrentUserId = mUserTracker.getUserId();
@@ -242,6 +285,7 @@ public class Clock extends TextView implements
         if (mAttached) {
             mBroadcastDispatcher.unregisterReceiver(mIntentReceiver);
             mAttached = false;
+            mContext.getContentResolver().unregisterContentObserver(mContentObserver);
             Dependency.get(TunerService.class).removeTunable(this);
             mCommandQueue.removeCallback(this);
             mUserTracker.removeCallback(mUserChangedCallback);
@@ -373,14 +417,6 @@ public class Clock extends TextView implements
         if (CLOCK_SECONDS.equals(key)) {
             mShowSeconds = TunerService.parseIntegerSwitch(newValue, false);
             updateShowSeconds();
-        } else if (CLOCK_STYLE.equals(key)) {
-            mAmPmStyle = TunerService.parseInteger(newValue, AM_PM_STYLE_GONE);
-            // Force refresh of dependent variables.
-            mContentDescriptionFormatString = "";
-            mDateTimePatternGenerator = null;
-            updateClock(true);
-        } else if (CLOCK_AUTO_HIDE.equals(key)) {
-            handleTaskStackListener(TunerService.parseIntegerSwitch(newValue, false));
         }
     }
 
@@ -403,6 +439,13 @@ public class Clock extends TextView implements
 
     @Override
     public void onDensityOrFontScaleChanged() {
+        reloadDimens();
+    }
+
+    private void reloadDimens() {
+        // reset mCachedWidth so the new width would be updated properly when next onMeasure
+        mCachedWidth = -1;
+
         FontSizeUtils.updateFontSize(this, R.dimen.status_bar_clock_size);
         setPaddingRelative(
                 mContext.getResources().getDimensionPixelSize(
@@ -411,6 +454,15 @@ public class Clock extends TextView implements
                 mContext.getResources().getDimensionPixelSize(
                         R.dimen.status_bar_clock_end_padding),
                 0);
+
+        float fontHeight = getPaint().getFontMetricsInt(null);
+        setLineHeight(TypedValue.COMPLEX_UNIT_PX, fontHeight);
+
+        ViewGroup.LayoutParams lp = getLayoutParams();
+        if (lp != null) {
+            lp.height = (int) Math.ceil(fontHeight);
+            setLayoutParams(lp);
+        }
     }
 
     private void updateShowSeconds() {
@@ -494,7 +546,7 @@ public class Clock extends TextView implements
                 if (a >= 0) {
                     // Move a back so any whitespace before AM/PM is also in the alternate size.
                     final int b = a;
-                    while (a > 0 && Character.isWhitespace(format.charAt(a-1))) {
+                    while (a > 0 && UCharacter.isUWhiteSpace(format.charAt(a - 1))) {
                         a--;
                     }
                     format = format.substring(0, a) + MAGIC1 + format.substring(a, b)

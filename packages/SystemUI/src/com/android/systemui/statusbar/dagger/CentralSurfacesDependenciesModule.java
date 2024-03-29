@@ -16,76 +16,56 @@
 
 package com.android.systemui.statusbar.dagger;
 
-import android.app.IActivityManager;
 import android.content.Context;
-import android.hardware.display.DisplayManager;
 import android.os.RemoteException;
 import android.service.dreams.IDreamManager;
 import android.util.Log;
 
 import com.android.internal.jank.InteractionJankMonitor;
 import com.android.internal.statusbar.IStatusBarService;
+import com.android.systemui.CoreStartable;
 import com.android.systemui.animation.ActivityLaunchAnimator;
 import com.android.systemui.animation.AnimationFeatureFlags;
 import com.android.systemui.animation.DialogLaunchAnimator;
-import com.android.systemui.colorextraction.SysuiColorExtractor;
+import com.android.systemui.bouncer.domain.interactor.AlternateBouncerInteractor;
 import com.android.systemui.dagger.SysUISingleton;
-import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.dump.DumpHandler;
 import com.android.systemui.dump.DumpManager;
 import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.flags.Flags;
-import com.android.systemui.keyguard.domain.interactor.AlternateBouncerInteractor;
 import com.android.systemui.media.controls.pipeline.MediaDataManager;
-import com.android.systemui.plugins.ActivityStarter;
-import com.android.systemui.plugins.statusbar.StatusBarStateController;
-import com.android.systemui.qs.carrier.QSCarrierGroupController;
+import com.android.systemui.power.domain.interactor.PowerInteractor;
 import com.android.systemui.settings.DisplayTracker;
-import com.android.systemui.statusbar.ActionClickLogger;
+import com.android.systemui.shade.NotificationPanelViewController;
+import com.android.systemui.shade.ShadeSurface;
+import com.android.systemui.shade.carrier.ShadeCarrierGroupController;
 import com.android.systemui.statusbar.CommandQueue;
-import com.android.systemui.statusbar.MediaArtworkProcessor;
 import com.android.systemui.statusbar.NotificationClickNotifier;
-import com.android.systemui.statusbar.NotificationLockscreenUserManager;
 import com.android.systemui.statusbar.NotificationMediaManager;
 import com.android.systemui.statusbar.NotificationRemoteInputManager;
-import com.android.systemui.statusbar.NotificationShadeWindowController;
 import com.android.systemui.statusbar.SmartReplyController;
 import com.android.systemui.statusbar.StatusBarStateControllerImpl;
 import com.android.systemui.statusbar.SysuiStatusBarStateController;
 import com.android.systemui.statusbar.commandline.CommandRegistry;
-import com.android.systemui.statusbar.gesture.SwipeStatusBarAwayGestureHandler;
-import com.android.systemui.statusbar.notification.NotifPipelineFlags;
 import com.android.systemui.statusbar.notification.collection.NotifCollection;
 import com.android.systemui.statusbar.notification.collection.NotifPipeline;
-import com.android.systemui.statusbar.notification.collection.notifcollection.CommonNotifCollection;
 import com.android.systemui.statusbar.notification.collection.render.NotificationVisibilityProvider;
-import com.android.systemui.statusbar.phone.CentralSurfaces;
 import com.android.systemui.statusbar.phone.CentralSurfacesImpl;
-import com.android.systemui.statusbar.phone.KeyguardBypassController;
 import com.android.systemui.statusbar.phone.ManagedProfileController;
 import com.android.systemui.statusbar.phone.ManagedProfileControllerImpl;
 import com.android.systemui.statusbar.phone.StatusBarIconController;
 import com.android.systemui.statusbar.phone.StatusBarIconControllerImpl;
 import com.android.systemui.statusbar.phone.StatusBarIconList;
+import com.android.systemui.statusbar.phone.StatusBarNotificationPresenterModule;
 import com.android.systemui.statusbar.phone.StatusBarRemoteInputCallback;
-import com.android.systemui.statusbar.phone.ongoingcall.OngoingCallController;
-import com.android.systemui.statusbar.phone.ongoingcall.OngoingCallFlags;
-import com.android.systemui.statusbar.phone.ongoingcall.OngoingCallLogger;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
-import com.android.systemui.statusbar.policy.RemoteInputUriController;
-import com.android.systemui.statusbar.window.StatusBarWindowController;
-import com.android.systemui.tracing.ProtoTracer;
-import com.android.systemui.tuner.TunerService;
-import com.android.systemui.util.concurrency.DelayableExecutor;
-import com.android.systemui.util.time.SystemClock;
-
-import java.util.Optional;
-import java.util.concurrent.Executor;
 
 import dagger.Binds;
 import dagger.Lazy;
 import dagger.Module;
 import dagger.Provides;
+import dagger.multibindings.ClassKey;
+import dagger.multibindings.IntoMap;
 
 /**
  * This module provides instances needed to construct {@link CentralSurfacesImpl}. These are moved to
@@ -93,75 +73,32 @@ import dagger.Provides;
  * their own version of CentralSurfaces can include just dependencies, without injecting
  * CentralSurfaces itself.
  */
-@Module
+@Module(includes = {StatusBarNotificationPresenterModule.class})
 public interface CentralSurfacesDependenciesModule {
+
     /** */
-    @SysUISingleton
-    @Provides
-    static NotificationRemoteInputManager provideNotificationRemoteInputManager(
-            Context context,
-            NotifPipelineFlags notifPipelineFlags,
-            NotificationLockscreenUserManager lockscreenUserManager,
-            SmartReplyController smartReplyController,
-            NotificationVisibilityProvider visibilityProvider,
-            Lazy<Optional<CentralSurfaces>> centralSurfacesOptionalLazy,
-            StatusBarStateController statusBarStateController,
-            RemoteInputUriController remoteInputUriController,
-            NotificationClickNotifier clickNotifier,
-            ActionClickLogger actionClickLogger,
-            DumpManager dumpManager,
-            TunerService tunerService) {
-        return new NotificationRemoteInputManager(
-                context,
-                notifPipelineFlags,
-                lockscreenUserManager,
-                smartReplyController,
-                visibilityProvider,
-                centralSurfacesOptionalLazy,
-                statusBarStateController,
-                remoteInputUriController,
-                clickNotifier,
-                actionClickLogger,
-                dumpManager);
-    }
+    @Binds
+    @IntoMap
+    @ClassKey(NotificationRemoteInputManager.class)
+    CoreStartable bindsStartNotificationRemoteInputManager(NotificationRemoteInputManager nrim);
 
     /** */
     @SysUISingleton
     @Provides
     static NotificationMediaManager provideNotificationMediaManager(
             Context context,
-            Lazy<Optional<CentralSurfaces>> centralSurfacesOptionalLazy,
-            Lazy<NotificationShadeWindowController> notificationShadeWindowController,
             NotificationVisibilityProvider visibilityProvider,
-            MediaArtworkProcessor mediaArtworkProcessor,
-            KeyguardBypassController keyguardBypassController,
             NotifPipeline notifPipeline,
             NotifCollection notifCollection,
-            @Main DelayableExecutor mainExecutor,
             MediaDataManager mediaDataManager,
-            StatusBarStateController statusBarStateController,
-            SysuiColorExtractor colorExtractor,
-            KeyguardStateController keyguardStateController,
-            DumpManager dumpManager,
-            DisplayManager displayManager,
-            TunerService tunerService) {
+            DumpManager dumpManager) {
         return new NotificationMediaManager(
                 context,
-                centralSurfacesOptionalLazy,
-                notificationShadeWindowController,
                 visibilityProvider,
-                mediaArtworkProcessor,
-                keyguardBypassController,
                 notifPipeline,
                 notifCollection,
-                mainExecutor,
                 mediaDataManager,
-                statusBarStateController,
-                colorExtractor,
-                keyguardStateController,
-                dumpManager,
-                displayManager,
-                tunerService);
+                dumpManager);
     }
 
     /** */
@@ -193,27 +130,30 @@ public interface CentralSurfacesDependenciesModule {
     static CommandQueue provideCommandQueue(
             Context context,
             DisplayTracker displayTracker,
-            ProtoTracer protoTracer,
             CommandRegistry registry,
-            DumpHandler dumpHandler
+            DumpHandler dumpHandler,
+            Lazy<PowerInteractor> powerInteractor
     ) {
-        return new CommandQueue(context, displayTracker, protoTracer, registry, dumpHandler);
+        return new CommandQueue(context, displayTracker, registry, dumpHandler, powerInteractor);
     }
 
-    /**
-     */
+    /** */
     @Binds
     ManagedProfileController provideManagedProfileController(
             ManagedProfileControllerImpl controllerImpl);
 
-    /**
-     */
+    /** */
     @Binds
     SysuiStatusBarStateController providesSysuiStatusBarStateController(
             StatusBarStateControllerImpl statusBarStateControllerImpl);
 
-    /**
-     */
+    /** */
+    @Binds
+    @IntoMap
+    @ClassKey(SysuiStatusBarStateController.class)
+    CoreStartable bindsStartStatusBarStateController(StatusBarStateControllerImpl sbsc);
+
+    /** */
     @Binds
     StatusBarIconController provideStatusBarIconController(
             StatusBarIconControllerImpl controllerImpl);
@@ -229,65 +169,33 @@ public interface CentralSurfacesDependenciesModule {
     }
 
     /**
+     * {@link NotificationPanelViewController} implements two interfaces:
+     *  - {@link com.android.systemui.shade.ShadeViewController}, which can be used by any class
+     *    needing access to the shade.
+     *  - {@link ShadeSurface}, which should *only* be used by {@link CentralSurfacesImpl}.
+     *
+     * Since {@link ShadeSurface} should only be accessible by {@link CentralSurfacesImpl}, it's
+     * *only* bound in this CentralSurfaces dependencies module.
+     * The {@link com.android.systemui.shade.ShadeViewController} interface is bound in
+     * {@link com.android.systemui.shade.ShadeModule} so others can access it.
      */
-    @Provides
+    @Binds
     @SysUISingleton
-    static OngoingCallController provideOngoingCallController(
-            Context context,
-            CommonNotifCollection notifCollection,
-            SystemClock systemClock,
-            ActivityStarter activityStarter,
-            @Main Executor mainExecutor,
-            IActivityManager iActivityManager,
-            OngoingCallLogger logger,
-            DumpManager dumpManager,
-            StatusBarWindowController statusBarWindowController,
-            SwipeStatusBarAwayGestureHandler swipeStatusBarAwayGestureHandler,
-            StatusBarStateController statusBarStateController,
-            OngoingCallFlags ongoingCallFlags) {
-
-        boolean ongoingCallInImmersiveEnabled = ongoingCallFlags.isInImmersiveEnabled();
-        Optional<StatusBarWindowController> windowController =
-                ongoingCallInImmersiveEnabled
-                        ? Optional.of(statusBarWindowController)
-                        : Optional.empty();
-        Optional<SwipeStatusBarAwayGestureHandler> gestureHandler =
-                ongoingCallInImmersiveEnabled
-                        ? Optional.of(swipeStatusBarAwayGestureHandler)
-                        : Optional.empty();
-        OngoingCallController ongoingCallController =
-                new OngoingCallController(
-                        context,
-                        notifCollection,
-                        ongoingCallFlags,
-                        systemClock,
-                        activityStarter,
-                        mainExecutor,
-                        iActivityManager,
-                        logger,
-                        dumpManager,
-                        windowController,
-                        gestureHandler,
-                        statusBarStateController);
-        ongoingCallController.init();
-        return ongoingCallController;
-    }
+    ShadeSurface provideShadeSurface(NotificationPanelViewController impl);
 
     /** */
     @Binds
-    QSCarrierGroupController.SlotIndexResolver provideSlotIndexResolver(
-            QSCarrierGroupController.SubscriptionManagerSlotIndexResolver impl);
+    ShadeCarrierGroupController.SlotIndexResolver provideSlotIndexResolver(
+            ShadeCarrierGroupController.SubscriptionManagerSlotIndexResolver impl);
 
-    /**
-     */
+    /** */
     @Provides
     @SysUISingleton
     static ActivityLaunchAnimator provideActivityLaunchAnimator() {
         return new ActivityLaunchAnimator();
     }
 
-    /**
-     */
+    /** */
     @Provides
     @SysUISingleton
     static DialogLaunchAnimator provideDialogLaunchAnimator(IDreamManager dreamManager,
@@ -319,8 +227,7 @@ public interface CentralSurfacesDependenciesModule {
         return new DialogLaunchAnimator(callback, interactionJankMonitor, animationFeatureFlags);
     }
 
-    /**
-     */
+    /** */
     @Provides
     @SysUISingleton
     static AnimationFeatureFlags provideAnimationFeatureFlags(FeatureFlags featureFlags) {

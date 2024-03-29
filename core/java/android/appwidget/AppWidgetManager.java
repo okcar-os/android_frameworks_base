@@ -16,6 +16,8 @@
 
 package android.appwidget;
 
+import static android.appwidget.flags.Flags.remoteAdapterConversion;
+
 import android.annotation.BroadcastBehavior;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
@@ -24,6 +26,7 @@ import android.annotation.SdkConstant;
 import android.annotation.SdkConstant.SdkConstantType;
 import android.annotation.SystemService;
 import android.annotation.TestApi;
+import android.annotation.UiThread;
 import android.annotation.UserIdInt;
 import android.app.IServiceConnection;
 import android.app.PendingIntent;
@@ -39,6 +42,10 @@ import android.content.pm.ShortcutInfo;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
+import android.os.HandlerExecutor;
+import android.os.HandlerThread;
+import android.os.Looper;
+import android.os.Process;
 import android.os.RemoteException;
 import android.os.UserHandle;
 import android.util.DisplayMetrics;
@@ -47,10 +54,14 @@ import android.widget.RemoteViews;
 
 import com.android.internal.appwidget.IAppWidgetService;
 import com.android.internal.os.BackgroundThread;
+import com.android.internal.util.FunctionalUtils;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 
 /**
  * Updates AppWidget state; gets information about installed AppWidget providers and other
@@ -473,6 +484,8 @@ public class AppWidgetManager {
 
     private static final String TAG = "AppWidgetManager";
 
+    private static Executor sUpdateExecutor;
+
     /**
      * An intent extra that contains multiple appWidgetIds.  These are id values as
      * they were provided to the application during a recent restore from backup.  It is
@@ -507,6 +520,8 @@ public class AppWidgetManager {
     @UnsupportedAppUsage
     private final IAppWidgetService mService;
     private final DisplayMetrics mDisplayMetrics;
+
+    private boolean mHasPostedLegacyLists = false;
 
     /**
      * Get the AppWidgetManager instance to use for the supplied {@link android.content.Context
@@ -545,9 +560,40 @@ public class AppWidgetManager {
                             }
                         }).toArray(ComponentName[]::new));
             } catch (Exception e) {
-                Log.e(TAG, "Nofity service of inheritance info", e);
+                Log.e(TAG, "Notify service of inheritance info", e);
             }
         });
+    }
+
+    private void tryAdapterConversion(
+            FunctionalUtils.RemoteExceptionIgnoringConsumer<RemoteViews> action,
+            RemoteViews original, String failureMsg) {
+        if (remoteAdapterConversion()
+                && (mHasPostedLegacyLists = mHasPostedLegacyLists
+                        || (original != null && original.hasLegacyLists()))) {
+            final RemoteViews viewsCopy = new RemoteViews(original);
+            Runnable updateWidgetWithTask = () -> {
+                try {
+                    viewsCopy.collectAllIntents().get();
+                    action.acceptOrThrow(viewsCopy);
+                } catch (Exception e) {
+                    Log.e(TAG, failureMsg, e);
+                }
+            };
+
+            if (Looper.getMainLooper() == Looper.myLooper()) {
+                createUpdateExecutorIfNull().execute(updateWidgetWithTask);
+                return;
+            }
+
+            updateWidgetWithTask.run();
+        } else {
+            try {
+                action.acceptOrThrow(original);
+            } catch (RemoteException re) {
+                throw re.rethrowFromSystemServer();
+            }
+        }
     }
 
     /**
@@ -573,11 +619,9 @@ public class AppWidgetManager {
         if (mService == null) {
             return;
         }
-        try {
-            mService.updateAppWidgetIds(mPackageName, appWidgetIds, views);
-        } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
-        }
+
+        tryAdapterConversion(view -> mService.updateAppWidgetIds(mPackageName, appWidgetIds,
+                view), views, "Error updating app widget views in background");
     }
 
     /**
@@ -585,6 +629,9 @@ public class AppWidgetManager {
      * <p>
      * The extras can be used to embed additional information about this widget to be accessed
      * by the associated widget's AppWidgetProvider.
+     *
+     * <p>
+     * The new options are merged into existing options using {@link Bundle#putAll} semantics.
      *
      * @see #getAppWidgetOptions(int)
      *
@@ -678,11 +725,10 @@ public class AppWidgetManager {
         if (mService == null) {
             return;
         }
-        try {
-            mService.partiallyUpdateAppWidgetIds(mPackageName, appWidgetIds, views);
-        } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
-        }
+
+        tryAdapterConversion(view -> mService.partiallyUpdateAppWidgetIds(mPackageName,
+                appWidgetIds, view), views,
+                "Error partially updating app widget views in background");
     }
 
     /**
@@ -733,11 +779,9 @@ public class AppWidgetManager {
         if (mService == null) {
             return;
         }
-        try {
-            mService.updateAppWidgetProvider(provider, views);
-        } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
-        }
+
+        tryAdapterConversion(view -> mService.updateAppWidgetProvider(provider, view), views,
+                "Error updating app widget view using provider in background");
     }
 
     /**
@@ -781,10 +825,43 @@ public class AppWidgetManager {
         if (mService == null) {
             return;
         }
+
+        if (remoteAdapterConversion()) {
+            if (Looper.myLooper() == Looper.getMainLooper()) {
+                mHasPostedLegacyLists = true;
+                createUpdateExecutorIfNull().execute(() -> notifyCollectionWidgetChange(
+                        appWidgetIds, viewId));
+            } else {
+                notifyCollectionWidgetChange(appWidgetIds, viewId);
+            }
+        } else {
+            try {
+                mService.notifyAppWidgetViewDataChanged(mPackageName, appWidgetIds, viewId);
+            } catch (RemoteException re) {
+                throw re.rethrowFromSystemServer();
+            }
+        }
+    }
+
+    private void notifyCollectionWidgetChange(int[] appWidgetIds, int viewId) {
         try {
-            mService.notifyAppWidgetViewDataChanged(mPackageName, appWidgetIds, viewId);
-        } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
+            List<CompletableFuture<Void>> updateFutures = new ArrayList<>();
+            for (int i = 0; i < appWidgetIds.length; i++) {
+                final int widgetId = appWidgetIds[i];
+                updateFutures.add(CompletableFuture.runAsync(() -> {
+                    try {
+                        RemoteViews views = mService.getAppWidgetViews(mPackageName, widgetId);
+                        if (views.replaceRemoteCollections(viewId)) {
+                            updateAppWidget(widgetId, views);
+                        }
+                    } catch (Exception e) {
+                        Log.e(TAG, "Error notifying changes in RemoteViews", e);
+                    }
+                }));
+            }
+            CompletableFuture.allOf(updateFutures.toArray(CompletableFuture[]::new)).join();
+        } catch (Exception e) {
+            Log.e(TAG, "Error notifying changes for all widgets", e);
         }
     }
 
@@ -1171,18 +1248,19 @@ public class AppWidgetManager {
      *                     {@link Context#BIND_AUTO_CREATE} and
      *                     {@link Context#BIND_FOREGROUND_SERVICE_WHILE_AWAKE} are supported.
      *
-     * @see Context#getServiceDispatcher(ServiceConnection, Handler, int)
+     * @see Context#getServiceDispatcher(ServiceConnection, Handler, long)
      * @hide
      */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public boolean bindRemoteViewsService(Context context, int appWidgetId, Intent intent,
-            IServiceConnection connection, @Context.BindServiceFlags int flags) {
+            IServiceConnection connection, @Context.BindServiceFlagsBits int flags) {
         if (mService == null) {
             return false;
         }
         try {
             return mService.bindRemoteViewsService(context.getOpPackageName(), appWidgetId, intent,
-                    context.getIApplicationThread(), context.getActivityToken(), connection, flags);
+                    context.getIApplicationThread(), context.getActivityToken(), connection,
+                    Integer.toUnsignedLong(flags));
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -1313,5 +1391,21 @@ public class AppWidgetManager {
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
+    }
+
+    @UiThread
+    private static @NonNull Executor createUpdateExecutorIfNull() {
+        if (sUpdateExecutor == null) {
+            sUpdateExecutor = new HandlerExecutor(createAndStartNewHandler(
+                    "widget_manager_update_helper_thread", Process.THREAD_PRIORITY_FOREGROUND));
+        }
+
+        return sUpdateExecutor;
+    }
+
+    private static @NonNull Handler createAndStartNewHandler(@NonNull String name, int priority) {
+        HandlerThread thread = new HandlerThread(name, priority);
+        thread.start();
+        return thread.getThreadHandler();
     }
 }

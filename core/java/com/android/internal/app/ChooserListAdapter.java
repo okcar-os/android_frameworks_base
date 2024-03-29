@@ -19,7 +19,6 @@ package com.android.internal.app;
 import static com.android.internal.app.ChooserActivity.TARGET_TYPE_SHORTCUTS_FROM_PREDICTION_SERVICE;
 import static com.android.internal.app.ChooserActivity.TARGET_TYPE_SHORTCUTS_FROM_SHORTCUT_MANAGER;
 
-import android.app.ActivityManager;
 import android.app.prediction.AppPredictor;
 import android.content.ComponentName;
 import android.content.Context;
@@ -103,7 +102,11 @@ public class ChooserListAdapter extends ResolverListAdapter {
     // Sorted list of DisplayResolveInfos for the alphabetical app section.
     private List<DisplayResolveInfo> mSortedList = new ArrayList<>();
     private AppPredictor mAppPredictor;
+    private ResolverAppPredictorCallback mAppPredictorCallbackWrapper;
     private AppPredictor.Callback mAppPredictorCallback;
+
+    // Represents the UserSpace in which the Initial Intents should be resolved.
+    private final UserHandle mInitialIntentsUserSpace;
 
     // For pinned direct share labels, if the text spans multiple lines, the TextView will consume
     // the full width, even if the characters actually take up less than that. Measure the actual
@@ -142,11 +145,12 @@ public class ChooserListAdapter extends ResolverListAdapter {
             ChooserListCommunicator chooserListCommunicator,
             SelectableTargetInfo.SelectableTargetInfoCommunicator selectableTargetInfoCommunicator,
             PackageManager packageManager,
-            ChooserActivityLogger chooserActivityLogger) {
+            ChooserActivityLogger chooserActivityLogger,
+            UserHandle initialIntentsUserSpace) {
         // Don't send the initial intents through the shared ResolverActivity path,
         // we want to separate them into a different section.
         super(context, payloadIntents, null, rList, filterLastUsed,
-                resolverListController, chooserListCommunicator, false);
+                resolverListController, chooserListCommunicator, false, initialIntentsUserSpace);
 
         mMaxShortcutTargetsPerApp =
                 context.getResources().getInteger(R.integer.config_maxShortcutTargetsPerApp);
@@ -154,6 +158,7 @@ public class ChooserListAdapter extends ResolverListAdapter {
         createPlaceHolders();
         mSelectableTargetInfoCommunicator = selectableTargetInfoCommunicator;
         mChooserActivityLogger = chooserActivityLogger;
+        mInitialIntentsUserSpace = initialIntentsUserSpace;
 
         if (initialIntents != null) {
             for (int i = 0; i < initialIntents.length; i++) {
@@ -202,6 +207,7 @@ public class ChooserListAdapter extends ResolverListAdapter {
                     ri.noResourceId = true;
                     ri.icon = 0;
                 }
+                ri.userHandle = mInitialIntentsUserSpace;
                 mCallerTargets.add(new DisplayResolveInfo(ii, ri, ii, makePresentationGetter(ri)));
                 if (mCallerTargets.size() == MAX_SUGGESTED_APP_TARGETS) break;
             }
@@ -350,8 +356,14 @@ public class ChooserListAdapter extends ResolverListAdapter {
                 // Consolidate multiple targets from same app.
                 Map<String, DisplayResolveInfo> consolidated = new HashMap<>();
                 for (DisplayResolveInfo info : allTargets) {
+                    if (info.getResolveInfo().userHandle == null) {
+                        Log.e(TAG, "ResolveInfo with null UserHandle found: "
+                                + info.getResolveInfo());
+                    }
                     String resolvedTarget = info.getResolvedComponentName().getPackageName()
-                            + '#' + info.getDisplayLabel();
+                            + '#' + info.getDisplayLabel()
+                            + '#' + ResolverActivity.getResolveInfoUserHandle(
+                                    info.getResolveInfo(), getUserHandle()).getIdentifier();
                     DisplayResolveInfo multiDri = consolidated.get(resolvedTarget);
                     if (multiDri == null) {
                         consolidated.put(resolvedTarget, info);
@@ -367,7 +379,8 @@ public class ChooserListAdapter extends ResolverListAdapter {
                 }
                 List<DisplayResolveInfo> groupedTargets = new ArrayList<>();
                 groupedTargets.addAll(consolidated.values());
-                Collections.sort(groupedTargets, new ChooserActivity.AzInfoComparator(mContext));
+                Collections.sort(groupedTargets,
+                        new ChooserActivity.AzInfoComparator(mContext));
                 return groupedTargets;
             }
             @Override
@@ -412,11 +425,9 @@ public class ChooserListAdapter extends ResolverListAdapter {
     }
 
     public int getServiceTargetCount() {
-        if (mChooserListCommunicator.isSendAction(mChooserListCommunicator.getTargetIntent())
-                && !ActivityManager.isLowRamDeviceStatic()) {
+        if (mChooserListCommunicator.shouldShowServiceTargets()) {
             return Math.min(mServiceTargets.size(), mChooserListCommunicator.getMaxRankedTargets());
         }
-
         return 0;
     }
 
@@ -734,8 +745,11 @@ public class ChooserListAdapter extends ResolverListAdapter {
         mAppPredictor = appPredictor;
     }
 
-    public void setAppPredictorCallback(AppPredictor.Callback appPredictorCallback) {
+    public void setAppPredictorCallback(
+            AppPredictor.Callback appPredictorCallback,
+            ResolverAppPredictorCallback appPredictorCallbackWrapper) {
         mAppPredictorCallback = appPredictorCallback;
+        mAppPredictorCallbackWrapper = appPredictorCallbackWrapper;
     }
 
     public void destroyAppPredictor() {
@@ -743,6 +757,10 @@ public class ChooserListAdapter extends ResolverListAdapter {
             getAppPredictor().unregisterPredictionUpdates(mAppPredictorCallback);
             getAppPredictor().destroy();
             setAppPredictor(null);
+        }
+
+        if (mAppPredictorCallbackWrapper != null) {
+            mAppPredictorCallbackWrapper.destroy();
         }
     }
 
@@ -758,6 +776,10 @@ public class ChooserListAdapter extends ResolverListAdapter {
         void sendListViewUpdateMessage(UserHandle userHandle);
 
         boolean isSendAction(Intent targetIntent);
+
+        boolean shouldShowContentPreview();
+
+        boolean shouldShowServiceTargets();
     }
 
     /**

@@ -18,12 +18,13 @@ package com.android.systemui.statusbar.notification
 
 import android.testing.AndroidTestingRunner
 import android.testing.TestableLooper
-import androidx.core.animation.AnimatorTestRule2
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.animation.AnimatorTestRule
 import com.android.systemui.dump.DumpManager
+import com.android.systemui.dump.logcatLogBuffer
 import com.android.systemui.plugins.statusbar.StatusBarStateController
-import com.android.systemui.shade.NotificationPanelViewController.WAKEUP_ANIMATION_DELAY_MS
+import com.android.systemui.shade.ShadeViewController.Companion.WAKEUP_ANIMATION_DELAY_MS
 import com.android.systemui.statusbar.StatusBarState
 import com.android.systemui.statusbar.notification.stack.NotificationStackScrollLayoutController
 import com.android.systemui.statusbar.notification.stack.StackStateAnimator.ANIMATION_DURATION_WAKEUP
@@ -51,7 +52,7 @@ import org.mockito.Mockito.verifyNoMoreInteractions
 @TestableLooper.RunWithLooper(setAsMainLooper = true)
 class NotificationWakeUpCoordinatorTest : SysuiTestCase() {
 
-    @get:Rule val animatorTestRule = AnimatorTestRule2()
+    @get:Rule val animatorTestRule = AnimatorTestRule()
 
     private val dumpManager: DumpManager = mock()
     private val headsUpManager: HeadsUpManager = mock()
@@ -59,7 +60,7 @@ class NotificationWakeUpCoordinatorTest : SysuiTestCase() {
     private val bypassController: KeyguardBypassController = mock()
     private val dozeParameters: DozeParameters = mock()
     private val screenOffAnimationController: ScreenOffAnimationController = mock()
-    private val logger: NotificationWakeUpCoordinatorLogger = mock()
+    private val logger = NotificationWakeUpCoordinatorLogger(logcatLogBuffer())
     private val stackScrollerController: NotificationStackScrollLayoutController = mock()
     private val wakeUpListener: NotificationWakeUpCoordinator.WakeUpListener = mock()
 

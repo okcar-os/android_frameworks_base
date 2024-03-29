@@ -19,6 +19,7 @@ package com.android.server.wm;
 import static android.app.ActivityManager.LOCK_TASK_MODE_LOCKED;
 import static android.app.ActivityManager.LOCK_TASK_MODE_NONE;
 import static android.app.ActivityManager.LOCK_TASK_MODE_PINNED;
+import static android.app.WindowConfiguration.WINDOWING_MODE_PINNED;
 import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
 import static android.content.Context.DEVICE_POLICY_SERVICE;
 import static android.content.Context.STATUS_BAR_SERVICE;
@@ -669,6 +670,9 @@ public class LockTaskController {
             }
         }
 
+        // When a task is locked, dismiss the root pinned task if it exists 
+        mSupervisor.mRootWindowContainer.removeRootTasksInWindowingModes(WINDOWING_MODE_PINNED);
+
         // System can only initiate screen pinning, not full lock task mode
         ProtoLog.w(WM_DEBUG_LOCKTASK, "%s", isSystemCaller ? "Locking pinned" : "Locking fully");
         setLockTaskMode(task, isSystemCaller ? LOCK_TASK_MODE_PINNED : LOCK_TASK_MODE_LOCKED,
@@ -1014,9 +1018,7 @@ public class LockTaskController {
      */
     boolean isBaseOfLockedTask(String packageName) {
         for (int i = 0; i < mLockTaskModeTasks.size(); i++) {
-            final Intent bi = mLockTaskModeTasks.get(i).getBaseIntent();
-            if (bi != null && packageName.equals(bi.getComponent()
-                    .getPackageName())) {
+            if (packageName.equals(mLockTaskModeTasks.get(i).getBasePackageName())) {
                 return true;
             }
         }

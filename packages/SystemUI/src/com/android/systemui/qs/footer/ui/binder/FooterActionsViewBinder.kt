@@ -24,36 +24,35 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.core.view.isInvisible
 import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
-import com.android.systemui.R
 import com.android.systemui.animation.Expandable
 import com.android.systemui.common.ui.binder.IconViewBinder
+import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.lifecycle.repeatWhenAttached
 import com.android.systemui.people.ui.view.PeopleViewBinder.bind
 import com.android.systemui.qs.footer.ui.viewmodel.FooterActionsButtonViewModel
 import com.android.systemui.qs.footer.ui.viewmodel.FooterActionsForegroundServicesButtonViewModel
 import com.android.systemui.qs.footer.ui.viewmodel.FooterActionsSecurityButtonViewModel
 import com.android.systemui.qs.footer.ui.viewmodel.FooterActionsViewModel
+import com.android.systemui.res.R
+import javax.inject.Inject
 import kotlin.math.roundToInt
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
 /** A ViewBinder for [FooterActionsViewBinder]. */
-object FooterActionsViewBinder {
+@SysUISingleton
+class FooterActionsViewBinder @Inject constructor() {
     /** Create a view that can later be [bound][bind] to a [FooterActionsViewModel]. */
-    @JvmStatic
     fun create(context: Context): LinearLayout {
         return LayoutInflater.from(context).inflate(R.layout.footer_actions, /* root= */ null)
             as LinearLayout
     }
 
     /** Bind [view] to [viewModel]. */
-    @JvmStatic
     fun bind(
         view: LinearLayout,
         viewModel: FooterActionsViewModel,
@@ -98,6 +97,7 @@ object FooterActionsViewBinder {
         var previousForegroundServices: FooterActionsForegroundServicesButtonViewModel? = null
         var previousUserSwitcher: FooterActionsButtonViewModel? = null
 
+        // Listen for ViewModel updates when the View is attached.
         view.repeatWhenAttached {
             val attachedScope = this.lifecycleScope
 
@@ -106,12 +106,7 @@ object FooterActionsViewBinder {
                 // TODO(b/242040009): Should this move somewhere else?
                 launch { viewModel.observeDeviceMonitoringDialogRequests(view.context) }
 
-                // Make sure we set the correct visibility and alpha even when QS are not currently
-                // shown.
-                launch {
-                    viewModel.isVisible.collect { isVisible -> view.isInvisible = !isVisible }
-                }
-
+                // Make sure we set the correct alphas even when QS are not currently shown.
                 launch { viewModel.alpha.collect { view.alpha = it } }
                 launch {
                     viewModel.backgroundAlpha.collect {
@@ -239,8 +234,8 @@ object FooterActionsViewBinder {
 
         val backgroundResource =
             when (model.backgroundColor) {
-                R.attr.offStateColor -> R.drawable.qs_footer_action_circle
-                com.android.internal.R.attr.colorAccent -> R.drawable.qs_footer_action_circle_color
+                R.attr.shadeInactive -> R.drawable.qs_footer_action_circle
+                R.attr.shadeActive -> R.drawable.qs_footer_action_circle_color
                 else -> error("Unsupported icon background resource ${model.backgroundColor}")
             }
         buttonView.setBackgroundResource(backgroundResource)

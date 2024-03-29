@@ -17,19 +17,20 @@
 package com.android.systemui.qs.tiles
 
 import android.os.Handler
+import android.provider.Settings
+import android.safetycenter.SafetyCenterManager
 import android.testing.AndroidTestingRunner
 import android.testing.TestableLooper
 import androidx.test.filters.SmallTest
 import com.android.internal.logging.MetricsLogger
-import com.android.internal.logging.UiEventLogger
-import com.android.internal.logging.testing.UiEventLoggerFake
-import com.android.systemui.R
+import com.android.systemui.res.R
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.classifier.FalsingManagerFake
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.plugins.qs.QSTile
 import com.android.systemui.plugins.statusbar.StatusBarStateController
 import com.android.systemui.qs.QSHost
+import com.android.systemui.qs.QsEventLogger
 import com.android.systemui.qs.logging.QSLogger
 import com.android.systemui.qs.tileimpl.QSTileImpl
 import com.android.systemui.statusbar.policy.IndividualSensorPrivacyController
@@ -67,19 +68,24 @@ class MicrophoneToggleTileTest : SysuiTestCase() {
     private lateinit var privacyController: IndividualSensorPrivacyController
     @Mock
     private lateinit var keyguardStateController: KeyguardStateController
+    @Mock
+    private lateinit var uiEventLogger: QsEventLogger
+    @Mock
+    private lateinit var safetyCenterManager: SafetyCenterManager
 
     private lateinit var testableLooper: TestableLooper
     private lateinit var tile: MicrophoneToggleTile
-    private val uiEventLogger: UiEventLogger = UiEventLoggerFake()
+
 
     @Before
     fun setUp() {
         MockitoAnnotations.initMocks(this)
         testableLooper = TestableLooper.get(this)
         whenever(host.context).thenReturn(mContext)
-        whenever(host.uiEventLogger).thenReturn(uiEventLogger)
 
-        tile = MicrophoneToggleTile(host,
+        tile = MicrophoneToggleTile(
+                host,
+                uiEventLogger,
                 testableLooper.looper,
                 Handler(testableLooper.looper),
                 metricsLogger,
@@ -88,7 +94,8 @@ class MicrophoneToggleTileTest : SysuiTestCase() {
                 activityStarter,
                 qsLogger,
                 privacyController,
-                keyguardStateController)
+                keyguardStateController,
+                safetyCenterManager)
     }
 
     @After
@@ -113,5 +120,47 @@ class MicrophoneToggleTileTest : SysuiTestCase() {
         tile.handleUpdateState(state, MICROPHONE_TOGGLE_DISABLED)
 
         assertThat(state.icon).isEqualTo(QSTileImpl.ResourceIcon.get(R.drawable.qs_mic_access_off))
+    }
+
+    @Test
+    fun testLongClickIntent_safetyCenterEnabled() {
+        whenever(safetyCenterManager.isSafetyCenterEnabled).thenReturn(true)
+        val micTile = MicrophoneToggleTile(
+                host,
+                uiEventLogger,
+                testableLooper.looper,
+                Handler(testableLooper.looper),
+                metricsLogger,
+                FalsingManagerFake(),
+                statusBarStateController,
+                activityStarter,
+                qsLogger,
+                privacyController,
+                keyguardStateController,
+                safetyCenterManager)
+        assertThat(micTile.longClickIntent?.action).isEqualTo(Settings.ACTION_PRIVACY_CONTROLS)
+        micTile.destroy()
+        testableLooper.processAllMessages()
+    }
+
+    @Test
+    fun testLongClickIntent_safetyCenterDisabled() {
+        whenever(safetyCenterManager.isSafetyCenterEnabled).thenReturn(false)
+        val micTile = MicrophoneToggleTile(
+                host,
+                uiEventLogger,
+                testableLooper.looper,
+                Handler(testableLooper.looper),
+                metricsLogger,
+                FalsingManagerFake(),
+                statusBarStateController,
+                activityStarter,
+                qsLogger,
+                privacyController,
+                keyguardStateController,
+                safetyCenterManager)
+        assertThat(micTile.longClickIntent?.action).isEqualTo(Settings.ACTION_PRIVACY_SETTINGS)
+        micTile.destroy()
+        testableLooper.processAllMessages()
     }
 }

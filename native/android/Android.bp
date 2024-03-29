@@ -27,10 +27,14 @@ ndk_library {
     symbol_file: "libandroid.map.txt",
     first_version: "9",
     unversioned_until: "current",
+    export_header_libs: [
+        "libandroid_headers",
+    ],
 }
 
 cc_defaults {
     name: "libandroid_defaults",
+    cpp_std: "gnu++20",
     cflags: [
         "-Wall",
         "-Werror",
@@ -42,7 +46,10 @@ cc_defaults {
 
 cc_library_shared {
     name: "libandroid",
-    defaults: ["libandroid_defaults"],
+    defaults: [
+        "libandroid_defaults",
+        "android.hardware.power-ndk_shared",
+    ],
 
     srcs: [
         "activity_manager.cpp",

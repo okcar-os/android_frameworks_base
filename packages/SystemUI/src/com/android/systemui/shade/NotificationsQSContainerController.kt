@@ -18,7 +18,6 @@ package com.android.systemui.shade
 
 import android.view.View
 import android.view.ViewGroup
-import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.view.WindowInsets
 import androidx.annotation.VisibleForTesting
 import androidx.constraintlayout.widget.ConstraintSet
@@ -27,18 +26,28 @@ import androidx.constraintlayout.widget.ConstraintSet.END
 import androidx.constraintlayout.widget.ConstraintSet.PARENT_ID
 import androidx.constraintlayout.widget.ConstraintSet.START
 import androidx.constraintlayout.widget.ConstraintSet.TOP
-import com.android.systemui.R
+import androidx.lifecycle.lifecycleScope
+import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Main
+import com.android.systemui.flags.FeatureFlags
+import com.android.systemui.flags.Flags
 import com.android.systemui.fragments.FragmentService
+import com.android.systemui.keyguard.shared.KeyguardShadeMigrationNssl
+import com.android.systemui.lifecycle.repeatWhenAttached
 import com.android.systemui.navigationbar.NavigationModeController
 import com.android.systemui.plugins.qs.QS
 import com.android.systemui.plugins.qs.QSContainerController
 import com.android.systemui.recents.OverviewProxyService
 import com.android.systemui.recents.OverviewProxyService.OverviewProxyListener
+import com.android.systemui.res.R
+import com.android.systemui.shade.domain.interactor.ShadeInteractor
 import com.android.systemui.shared.system.QuickStepContract
+import com.android.systemui.statusbar.notification.stack.NotificationStackScrollLayoutController
+import com.android.systemui.statusbar.policy.SplitShadeStateController
 import com.android.systemui.util.LargeScreenUtils
 import com.android.systemui.util.ViewController
 import com.android.systemui.util.concurrency.DelayableExecutor
+import kotlinx.coroutines.launch
 import java.util.function.Consumer
 import javax.inject.Inject
 import kotlin.reflect.KMutableProperty0
@@ -46,22 +55,27 @@ import kotlin.reflect.KMutableProperty0
 @VisibleForTesting
 internal const val INSET_DEBOUNCE_MILLIS = 500L
 
+@SysUISingleton
 class NotificationsQSContainerController @Inject constructor(
         view: NotificationsQuickSettingsContainer,
         private val navigationModeController: NavigationModeController,
         private val overviewProxyService: OverviewProxyService,
         private val shadeHeaderController: ShadeHeaderController,
-        private val shadeExpansionStateManager: ShadeExpansionStateManager,
+        private val shadeInteractor: ShadeInteractor,
         private val fragmentService: FragmentService,
-        @Main private val delayableExecutor: DelayableExecutor
+        @Main private val delayableExecutor: DelayableExecutor,
+        private val featureFlags: FeatureFlags,
+        private val
+            notificationStackScrollLayoutController: NotificationStackScrollLayoutController,
+        private val splitShadeStateController: SplitShadeStateController
 ) : ViewController<NotificationsQuickSettingsContainer>(view), QSContainerController {
 
-    private var qsExpanded = false
     private var splitShadeEnabled = false
     private var isQSDetailShowing = false
     private var isQSCustomizing = false
     private var isQSCustomizerAnimating = false
 
+    private var shadeHeaderHeight = 0
     private var largeScreenShadeHeaderHeight = 0
     private var largeScreenShadeHeaderActive = false
     private var notificationsBottomMargin = 0
@@ -79,13 +93,6 @@ class NotificationsQSContainerController @Inject constructor(
             taskbarVisible = visible
         }
     }
-    private val shadeQsExpansionListener: ShadeQsExpansionListener =
-        ShadeQsExpansionListener { isQsExpanded ->
-            if (qsExpanded != isQsExpanded) {
-                qsExpanded = isQsExpanded
-                mView.invalidate()
-            }
-        }
 
     // With certain configuration changes (like light/dark changes), the nav bar will disappear
     // for a bit, causing `bottomStableInsets` to be unstable for some time. Debounce the value
@@ -112,16 +119,25 @@ class NotificationsQSContainerController @Inject constructor(
     }
 
     override fun onInit() {
+        mView.repeatWhenAttached {
+            lifecycleScope.launch {
+                shadeInteractor.isQsExpanded.collect{ _ -> mView.invalidate() }
+            }
+        }
         val currentMode: Int = navigationModeController.addListener { mode: Int ->
             isGestureNavigation = QuickStepContract.isGesturalMode(mode)
         }
         isGestureNavigation = QuickStepContract.isGesturalMode(currentMode)
+
+        mView.setStackScroller(notificationStackScrollLayoutController.getView())
+        if (featureFlags.isEnabled(Flags.QS_CONTAINER_GRAPH_OPTIMIZER)){
+            mView.enableGraphOptimization()
+        }
     }
 
     public override fun onViewAttached() {
         updateResources()
         overviewProxyService.addCallback(taskbarVisibilityListener)
-        shadeExpansionStateManager.addQsExpansionListener(shadeQsExpansionListener)
         mView.setInsetsChangedListener(delayedInsetSetter)
         mView.setQSFragmentAttachedListener { qs: QS -> qs.setContainerController(this) }
         mView.setConfigurationChangedListener { updateResources() }
@@ -130,7 +146,6 @@ class NotificationsQSContainerController @Inject constructor(
 
     override fun onViewDetached() {
         overviewProxyService.removeCallback(taskbarVisibilityListener)
-        shadeExpansionStateManager.removeQsExpansionListener(shadeQsExpansionListener)
         mView.removeOnInsetsChangedListener()
         mView.removeQSFragmentAttachedListener()
         mView.setConfigurationChangedListener(null)
@@ -138,14 +153,15 @@ class NotificationsQSContainerController @Inject constructor(
     }
 
     fun updateResources() {
-        val newSplitShadeEnabled = LargeScreenUtils.shouldUseSplitNotificationShade(resources)
+        val newSplitShadeEnabled =
+                splitShadeStateController.shouldUseSplitNotificationShade(resources)
         val splitShadeEnabledChanged = newSplitShadeEnabled != splitShadeEnabled
         splitShadeEnabled = newSplitShadeEnabled
         largeScreenShadeHeaderActive = LargeScreenUtils.shouldUseLargeScreenShadeHeader(resources)
         notificationsBottomMargin = resources.getDimensionPixelSize(
                 R.dimen.notification_panel_margin_bottom)
-        largeScreenShadeHeaderHeight =
-                resources.getDimensionPixelSize(R.dimen.large_screen_shade_header_height)
+        largeScreenShadeHeaderHeight = calculateLargeShadeHeaderHeight()
+        shadeHeaderHeight = calculateShadeHeaderHeight()
         panelMarginHorizontal = resources.getDimensionPixelSize(
                 R.dimen.notification_panel_margin_horizontal)
         topMargin = if (largeScreenShadeHeaderActive) {
@@ -167,6 +183,23 @@ class NotificationsQSContainerController @Inject constructor(
         if (splitShadeEnabledChanged || dimensChanged) {
             updateBottomSpacing()
         }
+    }
+
+    private fun calculateLargeShadeHeaderHeight(): Int {
+        return resources.getDimensionPixelSize(R.dimen.large_screen_shade_header_height)
+    }
+
+    private fun calculateShadeHeaderHeight(): Int {
+        val minHeight = resources.getDimensionPixelSize(R.dimen.qs_header_height)
+
+        // Following the constraints in xml/qs_header, the total needed height would be the sum of
+        // 1. privacy_container height (R.dimen.large_screen_shade_header_min_height)
+        // 2. carrier_group height (R.dimen.large_screen_shade_header_min_height)
+        // 3. date height (R.dimen.new_qs_header_non_clickable_element_height)
+        val estimatedHeight =
+                2 * resources.getDimensionPixelSize(R.dimen.large_screen_shade_header_min_height) +
+                resources.getDimensionPixelSize(R.dimen.new_qs_header_non_clickable_element_height)
+        return estimatedHeight.coerceAtLeast(minHeight)
     }
 
     override fun setCustomizerAnimating(animating: Boolean) {
@@ -216,7 +249,7 @@ class NotificationsQSContainerController @Inject constructor(
             containerPadding = 0
             stackScrollMargin = bottomStableInsets + notificationsBottomMargin
         }
-        val qsContainerPadding = if (!(isQSCustomizing || isQSDetailShowing)) {
+        val qsContainerPadding = if (!isQSDetailShowing) {
             // We also want this padding in the bottom in these cases
             if (splitShadeEnabled) {
                 stackScrollMargin - scrimShadeBottomMargin - footerActionsOffset
@@ -245,19 +278,22 @@ class NotificationsQSContainerController @Inject constructor(
         if (largeScreenShadeHeaderActive) {
             constraintSet.constrainHeight(R.id.split_shade_status_bar, largeScreenShadeHeaderHeight)
         } else {
-            constraintSet.constrainHeight(R.id.split_shade_status_bar, WRAP_CONTENT)
+            constraintSet.constrainHeight(R.id.split_shade_status_bar, shadeHeaderHeight)
         }
     }
 
     private fun setNotificationsConstraints(constraintSet: ConstraintSet) {
+        if (KeyguardShadeMigrationNssl.isEnabled) {
+            return
+        }
         val startConstraintId = if (splitShadeEnabled) R.id.qs_edge_guideline else PARENT_ID
+        val nsslId = R.id.notification_stack_scroller
         constraintSet.apply {
-            connect(R.id.notification_stack_scroller, START, startConstraintId, START)
-            setMargin(R.id.notification_stack_scroller, START,
-                    if (splitShadeEnabled) 0 else panelMarginHorizontal)
-            setMargin(R.id.notification_stack_scroller, END, panelMarginHorizontal)
-            setMargin(R.id.notification_stack_scroller, TOP, topMargin)
-            setMargin(R.id.notification_stack_scroller, BOTTOM, notificationsBottomMargin)
+            connect(nsslId, START, startConstraintId, START)
+            setMargin(nsslId, START, if (splitShadeEnabled) 0 else panelMarginHorizontal)
+            setMargin(nsslId, END, panelMarginHorizontal)
+            setMargin(nsslId, TOP, topMargin)
+            setMargin(nsslId, BOTTOM, notificationsBottomMargin)
         }
     }
 

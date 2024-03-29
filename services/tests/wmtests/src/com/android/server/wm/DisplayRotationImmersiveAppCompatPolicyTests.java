@@ -23,22 +23,18 @@ import static android.app.WindowConfiguration.WINDOWING_MODE_PINNED;
 import static android.content.res.Configuration.ORIENTATION_LANDSCAPE;
 import static android.content.res.Configuration.ORIENTATION_PORTRAIT;
 import static android.content.res.Configuration.ORIENTATION_UNDEFINED;
-import static android.view.InsetsState.ITYPE_NAVIGATION_BAR;
-import static android.view.InsetsState.ITYPE_STATUS_BAR;
 
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.doReturn;
-import static com.android.dx.mockito.inline.extended.ExtendedMockito.eq;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.mock;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.spy;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.when;
 
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
-import static org.mockito.ArgumentMatchers.anyBoolean;
 
 import android.platform.test.annotations.Presubmit;
-import android.view.InsetsVisibilities;
 import android.view.Surface;
+import android.view.WindowInsets.Type;
 
 import androidx.test.filters.SmallTest;
 
@@ -62,7 +58,7 @@ public class DisplayRotationImmersiveAppCompatPolicyTests extends WindowTestsBas
     private LetterboxConfiguration mMockLetterboxConfiguration;
     private ActivityRecord mMockActivityRecord;
     private Task mMockTask;
-    private InsetsVisibilities mMockInsetsVisibilities;
+    private WindowState mMockWindowState;
 
     @Before
     public void setUp() throws Exception {
@@ -73,20 +69,20 @@ public class DisplayRotationImmersiveAppCompatPolicyTests extends WindowTestsBas
         when(mMockActivityRecord.areBoundsLetterboxed()).thenReturn(false);
         when(mMockActivityRecord.getRequestedConfigurationOrientation()).thenReturn(
                 ORIENTATION_LANDSCAPE);
-        WindowState mockWindowState = mock(WindowState.class);
-        mMockInsetsVisibilities = mock(InsetsVisibilities.class);
-        when(mMockInsetsVisibilities.getVisibility(eq(ITYPE_STATUS_BAR))).thenReturn(false);
-        when(mMockInsetsVisibilities.getVisibility(eq(ITYPE_NAVIGATION_BAR))).thenReturn(false);
-        when(mockWindowState.getRequestedVisibilities()).thenReturn(mMockInsetsVisibilities);
-        when(mMockActivityRecord.findMainWindow()).thenReturn(mockWindowState);
+        mMockWindowState = mock(WindowState.class);
+        when(mMockWindowState.getRequestedVisibleTypes()).thenReturn(0);
+        when(mMockActivityRecord.findMainWindow()).thenReturn(mMockWindowState);
 
         spy(mDisplayContent);
         doReturn(mMockActivityRecord).when(mDisplayContent).topRunningActivity();
         when(mDisplayContent.getIgnoreOrientationRequest()).thenReturn(true);
 
         mMockLetterboxConfiguration = mock(LetterboxConfiguration.class);
-        when(mMockLetterboxConfiguration.isDisplayRotationImmersiveAppCompatPolicyEnabled(
-                /* checkDeviceConfig */ anyBoolean())).thenReturn(true);
+        when(mMockLetterboxConfiguration.isDisplayRotationImmersiveAppCompatPolicyEnabled())
+                .thenReturn(true);
+        when(mMockLetterboxConfiguration
+                .isDisplayRotationImmersiveAppCompatPolicyEnabledAtBuildTime())
+                    .thenReturn(true);
 
         mPolicy = DisplayRotationImmersiveAppCompatPolicy.createIfNeeded(
                 mMockLetterboxConfiguration, createDisplayRotationMock(),
@@ -158,7 +154,7 @@ public class DisplayRotationImmersiveAppCompatPolicyTests extends WindowTestsBas
     @Test
     public void testIsRotationLockEnforced_statusBarVisible_lockNotEnforced() {
         // Some system bars are visible
-        when(mMockInsetsVisibilities.getVisibility(eq(ITYPE_STATUS_BAR))).thenReturn(true);
+        when(mMockWindowState.getRequestedVisibleTypes()).thenReturn(Type.statusBars());
 
         assertIsRotationLockEnforcedReturnsFalseForAllRotations();
     }
@@ -166,7 +162,7 @@ public class DisplayRotationImmersiveAppCompatPolicyTests extends WindowTestsBas
     @Test
     public void testIsRotationLockEnforced_navBarVisible_lockNotEnforced() {
         // Some system bars are visible
-        when(mMockInsetsVisibilities.getVisibility(eq(ITYPE_NAVIGATION_BAR))).thenReturn(true);
+        when(mMockWindowState.getRequestedVisibleTypes()).thenReturn(Type.navigationBars());
 
         assertIsRotationLockEnforcedReturnsFalseForAllRotations();
     }
@@ -210,8 +206,8 @@ public class DisplayRotationImmersiveAppCompatPolicyTests extends WindowTestsBas
 
     @Test
     public void testRotationChoiceEnforcedOnly_featureFlagDisabled_lockNotEnforced() {
-        when(mMockLetterboxConfiguration.isDisplayRotationImmersiveAppCompatPolicyEnabled(
-                /* checkDeviceConfig */ true)).thenReturn(false);
+        when(mMockLetterboxConfiguration.isDisplayRotationImmersiveAppCompatPolicyEnabled())
+                .thenReturn(false);
 
         assertIsRotationLockEnforcedReturnsFalseForAllRotations();
     }

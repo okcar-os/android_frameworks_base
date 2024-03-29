@@ -26,6 +26,10 @@ import android.annotation.TestApi;
 import android.app.ActivityManager;
 import android.app.ActivityThread;
 import android.app.IActivityManager;
+import android.app.IUnsafeIntentStrictModeCallback;
+import android.app.compat.CompatChanges;
+import android.compat.annotation.ChangeId;
+import android.compat.annotation.EnabledSince;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -344,6 +348,13 @@ public final class StrictMode {
     public static final int NETWORK_POLICY_LOG = 1;
     /** {@hide} */
     public static final int NETWORK_POLICY_REJECT = 2;
+  
+    /**
+     * Detect explicit calls to {@link Runtime#gc()}.
+     */
+    @ChangeId
+    @EnabledSince(targetSdkVersion = Build.VERSION_CODES.UPSIDE_DOWN_CAKE)
+    static final long DETECT_EXPLICIT_GC = 3400644L;
 
     // TODO: wrap in some ImmutableHashMap thing.
     // Note: must be before static initialization of sVmPolicy.
@@ -431,7 +442,7 @@ public final class StrictMode {
      * different penalties for different detected actions.
      */
     public static final class ThreadPolicy {
-        /** The default, lax policy which doesn't catch anything. */
+        /** The lax policy which doesn't catch anything. */
         public static final ThreadPolicy LAX = new ThreadPolicy(0, null, null);
 
         @UnsupportedAppUsage
@@ -496,6 +507,7 @@ public final class StrictMode {
              * <p>As of the Gingerbread release this includes network and disk operations but will
              * likely expand in future releases.
              */
+            @SuppressWarnings("AndroidFrameworkCompatChange")
             public @NonNull Builder detectAll() {
                 detectDiskReads();
                 detectDiskWrites();
@@ -510,6 +522,9 @@ public final class StrictMode {
                 }
                 if (targetSdk >= Build.VERSION_CODES.O) {
                     detectUnbufferedIo();
+                }
+                if (CompatChanges.isChangeEnabled(DETECT_EXPLICIT_GC)) {
+                    detectExplicitGc();
                 }
                 return this;
             }
@@ -591,26 +606,16 @@ public final class StrictMode {
             }
 
             /**
-             * Detect explicit GC requests, i.e. calls to Runtime.gc().
-             *
-             * @hide
+             * Detect calls to {@link Runtime#gc()}.
              */
-            @TestApi
             public @NonNull Builder detectExplicitGc() {
-                // TODO(b/3400644): Un-hide this for next API update
-                // TODO(b/3400644): Un-hide ExplicitGcViolation for next API update
-                // TODO(b/3400644): Make DETECT_EXPLICIT_GC a @TestApi for next API update
-                // TODO(b/3400644): Call this from detectAll in next API update
                 return enable(DETECT_THREAD_EXPLICIT_GC);
             }
 
             /**
-             * Disable detection of explicit GC requests, i.e. calls to Runtime.gc().
-             *
-             * @hide
+             * Disable detection of calls to {@link Runtime#gc()}.
              */
             public @NonNull Builder permitExplicitGc() {
-                // TODO(b/3400644): Un-hide this for next API update
                 return disable(DETECT_THREAD_EXPLICIT_GC);
             }
 
@@ -724,7 +729,7 @@ public final class StrictMode {
      * <p>The policy is enabled by {@link #setVmPolicy}.
      */
     public static final class VmPolicy {
-        /** The default, lax policy which doesn't catch anything. */
+        /** The lax policy which doesn't catch anything. */
         public static final VmPolicy LAX = new VmPolicy(0, EMPTY_CLASS_LIMIT_MAP, null, null);
 
         @UnsupportedAppUsage
@@ -1075,8 +1080,7 @@ public final class StrictMode {
             }
 
             /**
-             * Detect when your app launches an {@link Intent} which originated
-             * from outside your app.
+             * Detect when your app sends an unsafe {@link Intent}.
              * <p>
              * Violations may indicate security vulnerabilities in the design of
              * your app, where a malicious app could trick you into granting
@@ -1084,10 +1088,14 @@ public final class StrictMode {
              * are some typical design patterns that can be used to safely
              * resolve these violations:
              * <ul>
-             * <li>The ideal approach is to migrate to using a
-             * {@link android.app.PendingIntent}, which ensures that your launch is
-             * performed using the identity of the original creator, completely
-             * avoiding the security issues described above.
+             * <li> If you are sending an implicit intent to an unexported component, you should
+             * make it an explicit intent by using {@link Intent#setPackage},
+             * {@link Intent#setClassName} or {@link Intent#setComponent}.
+             * </li>
+             * <li> If you are unparceling and sending an intent from the intent delivered, The
+             * ideal approach is to migrate to using a {@link android.app.PendingIntent}, which
+             * ensures that your launch is performed using the identity of the original creator,
+             * completely avoiding the security issues described above.
              * <li>If using a {@link android.app.PendingIntent} isn't feasible, an
              * alternative approach is to create a brand new {@link Intent} and
              * carefully copy only specific values from the original
@@ -1454,7 +1462,7 @@ public final class StrictMode {
 
         if (Build.IS_USER || DISABLE || SystemProperties.getBoolean(DISABLE_PROPERTY, false)) {
             // Detect nothing extra
-        } else if (Build.IS_USERDEBUG) {
+        } else if (Build.IS_USERDEBUG || Build.IS_ENG) {
             // Detect everything in bundled apps
             if (isBundledSystemApp(ai)) {
                 builder.detectAll();
@@ -1462,14 +1470,9 @@ public final class StrictMode {
                 if (SystemProperties.getBoolean(VISUAL_PROPERTY, false)) {
                     builder.penaltyFlashScreen();
                 }
-            }
-        } else if (Build.IS_ENG) {
-            // Detect everything in bundled apps
-            if (isBundledSystemApp(ai)) {
-                builder.detectAll();
-                builder.penaltyDropBox();
-                builder.penaltyLog();
-                builder.penaltyFlashScreen();
+                if (Build.IS_ENG) {
+                    builder.penaltyLog();
+                }
             }
         }
 
@@ -2015,9 +2018,13 @@ public final class StrictMode {
             return;
         }
 
+        // Temporarily disable checks so that explicit GC is allowed.
+        final int oldMask = getThreadPolicyMask();
+        setThreadPolicyMask(0);
         System.gc();
         System.runFinalization();
         System.gc();
+        setThreadPolicyMask(oldMask);
 
         // Note: classInstanceLimit is immutable, so this is lock-free
         // Create the classes array.
@@ -2102,7 +2109,36 @@ public final class StrictMode {
                 VMRuntime.setDedupeHiddenApiWarnings(true);
             }
 
+            if ((sVmPolicy.mask & DETECT_VM_UNSAFE_INTENT_LAUNCH) != 0) {
+                registerIntentMatchingRestrictionCallback();
+            }
+
             setBlockGuardVmPolicy(sVmPolicy.mask);
+        }
+    }
+
+    private static void registerIntentMatchingRestrictionCallback() {
+        try {
+            ActivityManager.getService().registerStrictModeCallback(
+                    new UnsafeIntentStrictModeCallback());
+        } catch (RemoteException e) {
+            /*
+            If exception is DeadObjectException it means system process is dead, so we can ignore
+             */
+            if (!(e instanceof DeadObjectException)) {
+                Log.e(TAG, "RemoteException handling StrictMode violation", e);
+            }
+        }
+    }
+
+    private static final class UnsafeIntentStrictModeCallback
+            extends IUnsafeIntentStrictModeCallback.Stub {
+        @Override
+        public void onImplicitIntentMatchedInternalComponent(Intent intent) {
+            if (StrictMode.vmUnsafeIntentLaunchEnabled()) {
+                StrictMode.onUnsafeIntentLaunch(intent,
+                        "Launch of unsafe implicit intent: " + intent);
+            }
         }
     }
 
@@ -2329,15 +2365,20 @@ public final class StrictMode {
         onVmPolicyViolation(new UnsafeIntentLaunchViolation(intent));
     }
 
-    /** Assume locked until we hear otherwise */
-    private static volatile boolean sUserKeyUnlocked = false;
+    /** @hide */
+    public static void onUnsafeIntentLaunch(Intent intent, String message) {
+        onVmPolicyViolation(new UnsafeIntentLaunchViolation(intent, message));
+    }
 
-    private static boolean isUserKeyUnlocked(int userId) {
+    /** Assume locked until we hear otherwise */
+    private static volatile boolean sCeStorageUnlocked = false;
+
+    private static boolean isCeStorageUnlocked(int userId) {
         final IStorageManager storage = IStorageManager.Stub
                 .asInterface(ServiceManager.getService("mount"));
         if (storage != null) {
             try {
-                return storage.isUserKeyUnlocked(userId);
+                return storage.isCeStorageUnlocked(userId);
             } catch (RemoteException ignored) {
             }
         }
@@ -2350,13 +2391,13 @@ public final class StrictMode {
         // since any relocking of that user will always result in our
         // process being killed to release any CE FDs we're holding onto.
         if (userId == UserHandle.myUserId()) {
-            if (sUserKeyUnlocked) {
+            if (sCeStorageUnlocked) {
                 return;
-            } else if (isUserKeyUnlocked(userId)) {
-                sUserKeyUnlocked = true;
+            } else if (isCeStorageUnlocked(userId)) {
+                sCeStorageUnlocked = true;
                 return;
             }
-        } else if (isUserKeyUnlocked(userId)) {
+        } else if (isCeStorageUnlocked(userId)) {
             return;
         }
 

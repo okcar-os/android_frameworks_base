@@ -20,6 +20,7 @@ package com.android.systemui.keyguard.domain.interactor
 import android.app.admin.DevicePolicyManager
 import android.content.Intent
 import android.os.UserHandle
+import androidx.test.filters.FlakyTest
 import androidx.test.filters.SmallTest
 import com.android.internal.widget.LockPatternUtils
 import com.android.systemui.SysuiTestCase
@@ -28,8 +29,8 @@ import com.android.systemui.animation.DialogLaunchAnimator
 import com.android.systemui.animation.Expandable
 import com.android.systemui.common.shared.model.ContentDescription
 import com.android.systemui.common.shared.model.Icon
+import com.android.systemui.dock.DockManagerFake
 import com.android.systemui.flags.FakeFeatureFlags
-import com.android.systemui.flags.Flags
 import com.android.systemui.keyguard.data.quickaffordance.BuiltInKeyguardQuickAffordanceKeys
 import com.android.systemui.keyguard.data.quickaffordance.FakeKeyguardQuickAffordanceConfig
 import com.android.systemui.keyguard.data.quickaffordance.FakeKeyguardQuickAffordanceProviderClientFactory
@@ -37,17 +38,17 @@ import com.android.systemui.keyguard.data.quickaffordance.KeyguardQuickAffordanc
 import com.android.systemui.keyguard.data.quickaffordance.KeyguardQuickAffordanceLegacySettingSyncer
 import com.android.systemui.keyguard.data.quickaffordance.KeyguardQuickAffordanceLocalUserSelectionManager
 import com.android.systemui.keyguard.data.quickaffordance.KeyguardQuickAffordanceRemoteUserSelectionManager
-import com.android.systemui.keyguard.data.repository.FakeKeyguardBouncerRepository
-import com.android.systemui.keyguard.data.repository.FakeKeyguardRepository
+import com.android.systemui.keyguard.data.repository.FakeBiometricSettingsRepository
 import com.android.systemui.keyguard.data.repository.KeyguardQuickAffordanceRepository
-import com.android.systemui.keyguard.domain.quickaffordance.FakeKeyguardQuickAffordanceRegistry
 import com.android.systemui.keyguard.shared.quickaffordance.KeyguardQuickAffordancePosition
+import com.android.systemui.keyguard.shared.quickaffordance.KeyguardQuickAffordancesMetricsLogger
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.settings.FakeUserTracker
 import com.android.systemui.settings.UserFileManager
 import com.android.systemui.settings.UserTracker
-import com.android.systemui.statusbar.CommandQueue
+import com.android.systemui.shade.domain.interactor.shadeInteractor
 import com.android.systemui.statusbar.policy.KeyguardStateController
+import com.android.systemui.testKosmos
 import com.android.systemui.util.FakeSharedPreferences
 import com.android.systemui.util.mockito.any
 import com.android.systemui.util.mockito.mock
@@ -75,6 +76,10 @@ import org.mockito.Mockito.verifyZeroInteractions
 import org.mockito.MockitoAnnotations
 
 @OptIn(ExperimentalCoroutinesApi::class)
+@FlakyTest(
+    bugId = 292574995,
+    detail = "on certain architectures all permutations with startActivity=true is causing failures"
+)
 @SmallTest
 @RunWith(Parameterized::class)
 class KeyguardQuickAffordanceInteractorParameterizedTest : SysuiTestCase() {
@@ -223,8 +228,8 @@ class KeyguardQuickAffordanceInteractorParameterizedTest : SysuiTestCase() {
     @Mock private lateinit var animationController: ActivityLaunchAnimator.Controller
     @Mock private lateinit var expandable: Expandable
     @Mock private lateinit var launchAnimator: DialogLaunchAnimator
-    @Mock private lateinit var commandQueue: CommandQueue
     @Mock private lateinit var devicePolicyManager: DevicePolicyManager
+    @Mock private lateinit var logger: KeyguardQuickAffordancesMetricsLogger
 
     private lateinit var underTest: KeyguardQuickAffordanceInteractor
     private lateinit var testScope: TestScope
@@ -235,7 +240,11 @@ class KeyguardQuickAffordanceInteractorParameterizedTest : SysuiTestCase() {
     @JvmField @Parameter(3) var needsToUnlockFirst: Boolean = false
     @JvmField @Parameter(4) var startActivity: Boolean = false
     private lateinit var homeControls: FakeKeyguardQuickAffordanceConfig
+    private lateinit var dockManager: DockManagerFake
+    private lateinit var biometricSettingsRepository: FakeBiometricSettingsRepository
     private lateinit var userTracker: UserTracker
+
+    private val kosmos = testKosmos()
 
     @Before
     fun setUp() {
@@ -245,6 +254,8 @@ class KeyguardQuickAffordanceInteractorParameterizedTest : SysuiTestCase() {
         userTracker = FakeUserTracker()
         homeControls =
             FakeKeyguardQuickAffordanceConfig(BuiltInKeyguardQuickAffordanceKeys.HOME_CONTROLS)
+        dockManager = DockManagerFake()
+        biometricSettingsRepository = FakeBiometricSettingsRepository()
         val quickAccessWallet =
             FakeKeyguardQuickAffordanceConfig(
                 BuiltInKeyguardQuickAffordanceKeys.QUICK_ACCESS_WALLET
@@ -294,36 +305,17 @@ class KeyguardQuickAffordanceInteractorParameterizedTest : SysuiTestCase() {
                 dumpManager = mock(),
                 userHandle = UserHandle.SYSTEM,
             )
-        val featureFlags =
-            FakeFeatureFlags().apply {
-                set(Flags.CUSTOMIZABLE_LOCK_SCREEN_QUICK_AFFORDANCES, false)
-                set(Flags.FACE_AUTH_REFACTOR, true)
-            }
+        val featureFlags = FakeFeatureFlags()
         val testDispatcher = StandardTestDispatcher()
         testScope = TestScope(testDispatcher)
         underTest =
             KeyguardQuickAffordanceInteractor(
                 keyguardInteractor =
-                    KeyguardInteractor(
-                        repository = FakeKeyguardRepository(),
-                        commandQueue = commandQueue,
-                        featureFlags = featureFlags,
-                        bouncerRepository = FakeKeyguardBouncerRepository(),
-                    ),
-                registry =
-                    FakeKeyguardQuickAffordanceRegistry(
-                        mapOf(
-                            KeyguardQuickAffordancePosition.BOTTOM_START to
-                                listOf(
-                                    homeControls,
-                                ),
-                            KeyguardQuickAffordancePosition.BOTTOM_END to
-                                listOf(
-                                    quickAccessWallet,
-                                    qrCodeScanner,
-                                ),
-                        ),
-                    ),
+                    KeyguardInteractorFactory.create(
+                            featureFlags = featureFlags,
+                        )
+                        .keyguardInteractor,
+                shadeInteractor = kosmos.shadeInteractor,
                 lockPatternUtils = lockPatternUtils,
                 keyguardStateController = keyguardStateController,
                 userTracker = userTracker,
@@ -331,14 +323,19 @@ class KeyguardQuickAffordanceInteractorParameterizedTest : SysuiTestCase() {
                 featureFlags = featureFlags,
                 repository = { quickAffordanceRepository },
                 launchAnimator = launchAnimator,
+                logger = logger,
                 devicePolicyManager = devicePolicyManager,
+                dockManager = dockManager,
+                biometricSettingsRepository = biometricSettingsRepository,
                 backgroundDispatcher = testDispatcher,
+                appContext = mContext,
             )
     }
 
     @Test
     fun onQuickAffordanceTriggered() =
         testScope.runTest {
+            val key = BuiltInKeyguardQuickAffordanceKeys.HOME_CONTROLS
             setUpMocks(
                 needStrongAuthAfterBoot = needStrongAuthAfterBoot,
                 keyguardIsUnlocked = keyguardIsUnlocked,
@@ -361,8 +358,9 @@ class KeyguardQuickAffordanceInteractorParameterizedTest : SysuiTestCase() {
                 }
 
             underTest.onQuickAffordanceTriggered(
-                configKey = BuiltInKeyguardQuickAffordanceKeys.HOME_CONTROLS,
+                configKey = "${KeyguardQuickAffordancePosition.BOTTOM_START.toSlotId()}::$key",
                 expandable = expandable,
+                slotId = "",
             )
 
             if (startActivity) {

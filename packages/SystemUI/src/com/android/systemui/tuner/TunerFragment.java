@@ -25,8 +25,10 @@ import androidx.preference.PreferenceFragment;
 
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
-import com.android.systemui.R;
+import com.android.systemui.res.R;
 import com.android.systemui.shared.plugins.PluginPrefs;
+import com.android.tools.r8.keepanno.annotations.KeepTarget;
+import com.android.tools.r8.keepanno.annotations.UsesReflection;
 
 public class TunerFragment extends PreferenceFragment {
 
@@ -45,13 +47,10 @@ public class TunerFragment extends PreferenceFragment {
             "picture_in_picture",
     };
 
-    private final TunerService mTunerService;
-
     // We are the only ones who ever call this constructor, so don't worry about the warning
     @SuppressLint("ValidFragment")
-    public TunerFragment(TunerService tunerService) {
+    public TunerFragment() {
         super();
-        mTunerService = tunerService;
     }
 
     @Override
@@ -59,6 +58,13 @@ public class TunerFragment extends PreferenceFragment {
         super.onCreate(savedInstanceState);
     }
 
+    // aapt doesn't generate keep rules for android:fragment references in <Preference> tags, so
+    // explicitly declare references per usage in `R.xml.tuner_prefs`. See b/120445169.
+    @UsesReflection({
+        @KeepTarget(classConstant = LockscreenFragment.class),
+        @KeepTarget(classConstant = NavBarTuner.class),
+        @KeepTarget(classConstant = PluginFragment.class),
+    })
     @Override
     public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
         addPreferencesFromResource(R.xml.tuner_prefs);

@@ -16,10 +16,14 @@
 
 package com.android.systemui.media.controls.pipeline
 
+import android.annotation.SuppressLint
+import android.app.BroadcastOptions
 import android.app.Notification
 import android.app.Notification.EXTRA_SUBSTITUTE_APP_NAME
 import android.app.PendingIntent
+import android.app.StatusBarManager
 import android.app.UriGrantsManager
+import android.app.smartspace.SmartspaceAction
 import android.app.smartspace.SmartspaceConfig
 import android.app.smartspace.SmartspaceManager
 import android.app.smartspace.SmartspaceSession
@@ -50,11 +54,13 @@ import android.service.notification.StatusBarNotification
 import android.support.v4.media.MediaMetadataCompat
 import android.text.TextUtils
 import android.util.Log
+import android.util.Pair as APair
 import androidx.media.utils.MediaConstants
+import com.android.app.tracing.traceSection
+import com.android.internal.annotations.Keep
 import com.android.internal.logging.InstanceId
 import com.android.keyguard.KeyguardUpdateMonitor
 import com.android.systemui.Dumpable
-import com.android.systemui.R
 import com.android.systemui.broadcast.BroadcastDispatcher
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Background
@@ -77,6 +83,7 @@ import com.android.systemui.media.controls.util.MediaFlags
 import com.android.systemui.media.controls.util.MediaUiEventLogger
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.plugins.BcSmartspaceDataPlugin
+import com.android.systemui.res.R
 import com.android.systemui.statusbar.NotificationMediaManager.isConnectingState
 import com.android.systemui.statusbar.NotificationMediaManager.isPlayingState
 import com.android.systemui.statusbar.notification.row.HybridGroupManager
@@ -84,8 +91,8 @@ import com.android.systemui.tuner.TunerService
 import com.android.systemui.util.Assert
 import com.android.systemui.util.Utils
 import com.android.systemui.util.concurrency.DelayableExecutor
+import com.android.systemui.util.concurrency.ThreadFactory
 import com.android.systemui.util.time.SystemClock
-import com.android.systemui.util.traceSection
 import java.io.IOException
 import java.io.PrintWriter
 import java.util.concurrent.Executor
@@ -137,6 +144,8 @@ internal val EMPTY_SMARTSPACE_MEDIA_DATA =
         expiryTimeMs = 0,
     )
 
+const val MEDIA_TITLE_ERROR_MESSAGE = "Invalid media data: title is null or blank."
+
 fun isMediaNotification(sbn: StatusBarNotification): Boolean {
     return sbn.notification.isMediaNotification()
 }
@@ -179,7 +188,7 @@ class MediaDataManager(
     private val tunerService: TunerService,
     private val mediaFlags: MediaFlags,
     private val logger: MediaUiEventLogger,
-    private val smartspaceManager: SmartspaceManager,
+    private val smartspaceManager: SmartspaceManager?,
     private val keyguardUpdateMonitor: KeyguardUpdateMonitor,
 ) : Dumpable, BcSmartspaceDataPlugin.SmartspaceTargetListener {
 
@@ -215,8 +224,19 @@ class MediaDataManager(
     private val mediaEntries: LinkedHashMap<String, MediaData> = LinkedHashMap()
     // There should ONLY be at most one Smartspace media recommendation.
     var smartspaceMediaData: SmartspaceMediaData = EMPTY_SMARTSPACE_MEDIA_DATA
-    private var smartspaceSession: SmartspaceSession? = null
+    @Keep private var smartspaceSession: SmartspaceSession? = null
     private var allowMediaRecommendations = allowMediaRecommendations(context)
+
+    private val artworkWidth =
+        context.resources.getDimensionPixelSize(
+            com.android.internal.R.dimen.config_mediaMetadataBitmapMaxSize
+        )
+    private val artworkHeight =
+        context.resources.getDimensionPixelSize(R.dimen.qs_media_session_height_expanded)
+
+    @SuppressLint("WrongConstant") // sysui allowed to call STATUS_BAR_SERVICE
+    private val statusBarManager =
+        context.getSystemService(Context.STATUS_BAR_SERVICE) as StatusBarManager
 
     /** Check whether this notification is an RCN */
     private fun isRemoteCastNotification(sbn: StatusBarNotification): Boolean {
@@ -226,7 +246,7 @@ class MediaDataManager(
     @Inject
     constructor(
         context: Context,
-        @Background backgroundExecutor: Executor,
+        threadFactory: ThreadFactory,
         @Main uiExecutor: Executor,
         @Main foregroundExecutor: DelayableExecutor,
         mediaControllerFactory: MediaControllerFactory,
@@ -244,11 +264,13 @@ class MediaDataManager(
         tunerService: TunerService,
         mediaFlags: MediaFlags,
         logger: MediaUiEventLogger,
-        smartspaceManager: SmartspaceManager,
+        smartspaceManager: SmartspaceManager?,
         keyguardUpdateMonitor: KeyguardUpdateMonitor,
     ) : this(
         context,
-        backgroundExecutor,
+        // Loading bitmap for UMO background can take longer time, so it cannot run on the default
+        // background thread. Use a custom thread for media.
+        threadFactory.buildExecutorOnNewThread(TAG),
         uiExecutor,
         foregroundExecutor,
         mediaControllerFactory,
@@ -331,7 +353,7 @@ class MediaDataManager(
         // Register for Smartspace data updates.
         smartspaceMediaDataProvider.registerListener(this)
         smartspaceSession =
-            smartspaceManager.createSmartspaceSession(
+            smartspaceManager?.createSmartspaceSession(
                 SmartspaceConfig.Builder(context, SMARTSPACE_UI_SURFACE_LABEL).build()
             )
         smartspaceSession?.let {
@@ -366,26 +388,28 @@ class MediaDataManager(
 
     fun destroy() {
         smartspaceMediaDataProvider.unregisterListener(this)
+        smartspaceSession?.close()
+        smartspaceSession = null
         context.unregisterReceiver(appChangeReceiver)
     }
 
     fun onNotificationAdded(key: String, sbn: StatusBarNotification) {
         if (useQsMediaPlayer && isMediaNotification(sbn)) {
-            var logEvent = false
+            var isNewlyActiveEntry = false
             Assert.isMainThread()
             val oldKey = findExistingEntry(key, sbn.packageName)
             if (oldKey == null) {
                 val instanceId = logger.getNewInstanceId()
                 val temp = LOADING.copy(packageName = sbn.packageName, instanceId = instanceId)
                 mediaEntries.put(key, temp)
-                logEvent = true
+                isNewlyActiveEntry = true
             } else if (oldKey != key) {
                 // Resume -> active conversion; move to new key
                 val oldData = mediaEntries.remove(oldKey)!!
-                logEvent = true
+                isNewlyActiveEntry = true
                 mediaEntries.put(key, oldData)
             }
-            loadMediaData(key, sbn, oldKey, logEvent)
+            loadMediaData(key, sbn, oldKey, isNewlyActiveEntry)
         } else {
             onNotificationRemoved(key)
         }
@@ -468,9 +492,9 @@ class MediaDataManager(
         key: String,
         sbn: StatusBarNotification,
         oldKey: String?,
-        logEvent: Boolean = false
+        isNewlyActiveEntry: Boolean = false,
     ) {
-        backgroundExecutor.execute { loadMediaDataInBg(key, sbn, oldKey, logEvent) }
+        backgroundExecutor.execute { loadMediaDataInBg(key, sbn, oldKey, isNewlyActiveEntry) }
     }
 
     /** Add a listener for changes in this class */
@@ -594,9 +618,11 @@ class MediaDataManager(
         }
     }
 
-    private fun removeEntry(key: String) {
+    private fun removeEntry(key: String, logEvent: Boolean = true) {
         mediaEntries.remove(key)?.let {
-            logger.logMediaRemoved(it.appUid, it.packageName, it.instanceId)
+            if (logEvent) {
+                logger.logMediaRemoved(it.appUid, it.packageName, it.instanceId)
+            }
         }
         notifyMediaDataRemoved(key)
     }
@@ -697,8 +723,7 @@ class MediaDataManager(
         val instanceId = currentEntry?.instanceId ?: logger.getNewInstanceId()
         val isExplicit =
             desc.extras?.getLong(MediaConstants.METADATA_KEY_IS_EXPLICIT) ==
-                MediaConstants.METADATA_VALUE_ATTRIBUTE_PRESENT &&
-                mediaFlags.isExplicitIndicatorEnabled()
+                MediaConstants.METADATA_VALUE_ATTRIBUTE_PRESENT
 
         val progress =
             if (mediaFlags.isResumeProgressEnabled()) {
@@ -745,7 +770,7 @@ class MediaDataManager(
         key: String,
         sbn: StatusBarNotification,
         oldKey: String?,
-        logEvent: Boolean = false
+        isNewlyActiveEntry: Boolean = false,
     ) {
         val token =
             sbn.notification.extras.getParcelable(
@@ -766,6 +791,27 @@ class MediaDataManager(
             )
                 ?: getAppInfoFromPackage(sbn.packageName)
 
+        // App name
+        val appName = getAppName(sbn, appInfo)
+
+        // Song name
+        var song: CharSequence? = metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
+        if (song.isNullOrBlank()) {
+            song = metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)
+        }
+        if (song.isNullOrBlank()) {
+            song = HybridGroupManager.resolveTitle(notif)
+        }
+        if (song.isNullOrBlank()) {
+            // For apps that don't include a title, log and add a placeholder
+            song = context.getString(R.string.controls_media_empty_title, appName)
+            try {
+                statusBarManager.logBlankMediaTitle(sbn.packageName, sbn.user.identifier)
+            } catch (e: RuntimeException) {
+                Log.e(TAG, "Error reporting blank media title for package ${sbn.packageName}")
+            }
+        }
+
         // Album art
         var artworkBitmap = metadata?.let { loadBitmapFromUri(it) }
         if (artworkBitmap == null) {
@@ -781,37 +827,19 @@ class MediaDataManager(
                 Icon.createWithBitmap(artworkBitmap)
             }
 
-        // App name
-        val appName = getAppName(sbn, appInfo)
-
         // App Icon
         val smallIcon = sbn.notification.smallIcon
 
-        // Song name
-        var song: CharSequence? = metadata?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
-        if (song.isNullOrBlank()) {
-            song = metadata?.getString(MediaMetadata.METADATA_KEY_TITLE)
-        }
-        if (song.isNullOrBlank()) {
-            song = HybridGroupManager.resolveTitle(notif)
-        }
-        if (song.isNullOrBlank()) {
-            // For apps that don't include a title, add a placeholder
-            song = context.getString(R.string.controls_media_empty_title, appName)
-        }
-
         // Explicit Indicator
         var isExplicit = false
-        if (mediaFlags.isExplicitIndicatorEnabled()) {
-            val mediaMetadataCompat = MediaMetadataCompat.fromMediaMetadata(metadata)
-            isExplicit =
-                mediaMetadataCompat?.getLong(MediaConstants.METADATA_KEY_IS_EXPLICIT) ==
-                    MediaConstants.METADATA_VALUE_ATTRIBUTE_PRESENT
-        }
+        val mediaMetadataCompat = MediaMetadataCompat.fromMediaMetadata(metadata)
+        isExplicit =
+            mediaMetadataCompat?.getLong(MediaConstants.METADATA_KEY_IS_EXPLICIT) ==
+                MediaConstants.METADATA_VALUE_ATTRIBUTE_PRESENT
 
         // Artist name
         var artist: CharSequence? = metadata?.getString(MediaMetadata.METADATA_KEY_ARTIST)
-        if (artist == null) {
+        if (artist.isNullOrBlank()) {
             artist = HybridGroupManager.resolveText(notif)
         }
 
@@ -871,7 +899,7 @@ class MediaDataManager(
         val instanceId = currentEntry?.instanceId ?: logger.getNewInstanceId()
         val appUid = appInfo?.uid ?: Process.INVALID_UID
 
-        if (logEvent) {
+        if (isNewlyActiveEntry) {
             logSingleVsMultipleMediaAdded(appUid, sbn.packageName, instanceId)
             logger.logActiveMediaAdded(appUid, sbn.packageName, instanceId, playbackLocation)
         } else if (playbackLocation != currentEntry?.playbackLocation) {
@@ -1227,7 +1255,12 @@ class MediaDataManager(
 
     private fun sendPendingIntent(intent: PendingIntent): Boolean {
         return try {
-            intent.send()
+            val options = BroadcastOptions.makeBasic()
+            options.setInteractive(true)
+            options.setPendingIntentBackgroundActivityStartMode(
+                BroadcastOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+            )
+            intent.send(options.toBundle())
             true
         } catch (e: PendingIntent.CanceledException) {
             Log.d(TAG, "Intent canceled", e)
@@ -1278,9 +1311,21 @@ class MediaDataManager(
             return null
         }
 
-        val source = ImageDecoder.createSource(context.getContentResolver(), uri)
+        val source = ImageDecoder.createSource(context.contentResolver, uri)
         return try {
-            ImageDecoder.decodeBitmap(source) { decoder, _, _ ->
+            ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+                val width = info.size.width
+                val height = info.size.height
+                val scale =
+                    MediaDataUtils.getScaleFactor(
+                        APair(width, height),
+                        APair(artworkWidth, artworkHeight)
+                    )
+
+                // Downscale if needed
+                if (scale != 0f && scale < 1) {
+                    decoder.setTargetSize((scale * width).toInt(), (scale * height).toInt())
+                }
                 decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
             }
         } catch (e: IOException) {
@@ -1387,8 +1432,6 @@ class MediaDataManager(
     }
 
     private fun onSessionDestroyed(key: String) {
-        if (!mediaFlags.isRetainingPlayersEnabled()) return
-
         if (DEBUG) Log.d(TAG, "session destroyed for $key")
         val entry = mediaEntries.remove(key) ?: return
         // Clear token since the session is no longer valid
@@ -1432,7 +1475,7 @@ class MediaDataManager(
             if (DEBUG) Log.d(TAG, "Removing still-active player $key")
             notifyMediaDataRemoved(key)
             logger.logMediaRemoved(removed.appUid, removed.packageName, removed.instanceId)
-        } else {
+        } else if (mediaFlags.isRetainingPlayersEnabled() || isAbleToResume(removed)) {
             // Convert to resume
             if (DEBUG) {
                 Log.d(
@@ -1442,6 +1485,11 @@ class MediaDataManager(
                 )
             }
             convertToResumePlayer(key, removed)
+        } else {
+            // Retaining players flag is off and app doesn't support resume: remove player.
+            if (DEBUG) Log.d(TAG, "Removing player $key")
+            notifyMediaDataRemoved(key)
+            logger.logMediaRemoved(removed.appUid, removed.packageName, removed.instanceId)
         }
     }
 
@@ -1609,20 +1657,18 @@ class MediaDataManager(
      *   SmartspaceTarget's data is invalid.
      */
     private fun toSmartspaceMediaData(target: SmartspaceTarget): SmartspaceMediaData {
-        var dismissIntent: Intent? = null
-        if (target.baseAction != null && target.baseAction.extras != null) {
-            dismissIntent =
-                target.baseAction.extras.getParcelable(EXTRAS_SMARTSPACE_DISMISS_INTENT_KEY)
-                    as Intent?
-        }
+        val baseAction: SmartspaceAction? = target.baseAction
+        val dismissIntent =
+            baseAction?.extras?.getParcelable(EXTRAS_SMARTSPACE_DISMISS_INTENT_KEY) as Intent?
 
         val isActive =
             when {
                 !mediaFlags.isPersistentSsCardEnabled() -> true
-                target.baseAction == null -> true
-                else ->
-                    target.baseAction.extras.getString(EXTRA_KEY_TRIGGER_SOURCE) !=
-                        EXTRA_VALUE_TRIGGER_PERIODIC
+                baseAction == null -> true
+                else -> {
+                    val triggerSource = baseAction.extras?.getString(EXTRA_KEY_TRIGGER_SOURCE)
+                    triggerSource != EXTRA_VALUE_TRIGGER_PERIODIC
+                }
             }
 
         packageName(target)?.let {

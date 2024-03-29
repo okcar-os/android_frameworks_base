@@ -17,6 +17,7 @@
 package com.android.systemui.statusbar.pipeline.mobile.data.repository.demo
 
 import android.telephony.CellSignalStrength
+import android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID
 import android.telephony.TelephonyManager
 import com.android.systemui.log.table.TableLogBuffer
 import com.android.systemui.log.table.logDiffsForTable
@@ -25,6 +26,7 @@ import com.android.systemui.statusbar.pipeline.mobile.data.model.NetworkNameMode
 import com.android.systemui.statusbar.pipeline.mobile.data.model.ResolvedNetworkType
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.MobileConnectionRepository
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.demo.model.FakeNetworkEventModel
+import com.android.systemui.statusbar.pipeline.mobile.data.repository.prod.FullMobileConnectionRepository.Companion.COL_CARRIER_ID
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.prod.FullMobileConnectionRepository.Companion.COL_CARRIER_NETWORK_CHANGE
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.prod.FullMobileConnectionRepository.Companion.COL_CDMA_LEVEL
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.prod.FullMobileConnectionRepository.Companion.COL_EMERGENCY
@@ -52,6 +54,17 @@ class DemoMobileConnectionRepository(
     override val tableLogBuffer: TableLogBuffer,
     val scope: CoroutineScope,
 ) : MobileConnectionRepository {
+    private val _carrierId = MutableStateFlow(INVALID_SUBSCRIPTION_ID)
+    override val carrierId =
+        _carrierId
+            .logDiffsForTable(
+                tableLogBuffer,
+                columnPrefix = "",
+                columnName = COL_CARRIER_ID,
+                _carrierId.value,
+            )
+            .stateIn(scope, SharingStarted.WhileSubscribed(), _carrierId.value)
+
     private val _isEmergencyOnly = MutableStateFlow(false)
     override val isEmergencyOnly =
         _isEmergencyOnly
@@ -171,7 +184,16 @@ class DemoMobileConnectionRepository(
 
     override val cdmaRoaming = MutableStateFlow(false)
 
-    override val networkName = MutableStateFlow(NetworkNameModel.IntentDerived("demo network"))
+    override val networkName = MutableStateFlow(NetworkNameModel.IntentDerived(DEMO_CARRIER_NAME))
+
+    override val carrierName =
+        MutableStateFlow(NetworkNameModel.SubscriptionDerived(DEMO_CARRIER_NAME))
+
+    override val isAllowedDuringAirplaneMode = MutableStateFlow(false)
+
+    override val hasPrioritizedNetworkCapabilities = MutableStateFlow(false)
+
+    override suspend fun isInEcmMode(): Boolean = false
 
     /**
      * Process a new demo mobile event. Note that [resolvedNetworkType] must be passed in separately
@@ -185,6 +207,9 @@ class DemoMobileConnectionRepository(
         // This is always true here, because we split out disabled states at the data-source level
         dataEnabled.value = true
         networkName.value = NetworkNameModel.IntentDerived(event.name)
+        carrierName.value = NetworkNameModel.SubscriptionDerived("${event.name} ${event.subId}")
+
+        _carrierId.value = event.carrierId ?: INVALID_SUBSCRIPTION_ID
 
         cdmaRoaming.value = event.roaming
         _isRoaming.value = event.roaming
@@ -202,12 +227,18 @@ class DemoMobileConnectionRepository(
             (event.activity ?: TelephonyManager.DATA_ACTIVITY_NONE).toMobileDataActivityModel()
         _carrierNetworkChangeActive.value = event.carrierNetworkChange
         _resolvedNetworkType.value = resolvedNetworkType
+
+        isAllowedDuringAirplaneMode.value = false
+        hasPrioritizedNetworkCapabilities.value = event.slice
     }
 
     fun processCarrierMergedEvent(event: FakeWifiEventModel.CarrierMerged) {
         // This is always true here, because we split out disabled states at the data-source level
         dataEnabled.value = true
         networkName.value = NetworkNameModel.IntentDerived(CARRIER_MERGED_NAME)
+        carrierName.value = NetworkNameModel.SubscriptionDerived(CARRIER_MERGED_NAME)
+        // TODO(b/276943904): is carrierId a thing with carrier merged networks?
+        _carrierId.value = INVALID_SUBSCRIPTION_ID
         numberOfLevels.value = event.numberOfLevels
         cdmaRoaming.value = false
         _primaryLevel.value = event.level
@@ -223,9 +254,12 @@ class DemoMobileConnectionRepository(
         _isInService.value = true
         _isGsm.value = false
         _carrierNetworkChangeActive.value = false
+        isAllowedDuringAirplaneMode.value = true
+        hasPrioritizedNetworkCapabilities.value = false
     }
 
     companion object {
+        private const val DEMO_CARRIER_NAME = "Demo Carrier"
         private const val CARRIER_MERGED_NAME = "Carrier Merged Network"
     }
 }

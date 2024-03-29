@@ -16,8 +16,8 @@
 package com.android.internal.app;
 
 import android.annotation.IntDef;
-import android.annotation.Nullable;
 import android.annotation.NonNull;
+import android.annotation.Nullable;
 import android.annotation.UserIdInt;
 import android.app.AppGlobals;
 import android.content.ContentResolver;
@@ -60,16 +60,19 @@ public abstract class AbstractMultiProfilePagerAdapter extends PagerAdapter {
     private Set<Integer> mLoadedPages;
     private final EmptyStateProvider mEmptyStateProvider;
     private final UserHandle mWorkProfileUserHandle;
+    private final UserHandle mCloneUserHandle;
     private final QuietModeManager mQuietModeManager;
 
     AbstractMultiProfilePagerAdapter(Context context, int currentPage,
             EmptyStateProvider emptyStateProvider,
             QuietModeManager quietModeManager,
-            UserHandle workProfileUserHandle) {
+            UserHandle workProfileUserHandle,
+            UserHandle cloneUserHandle) {
         mContext = Objects.requireNonNull(context);
         mCurrentPage = currentPage;
         mLoadedPages = new HashSet<>();
         mWorkProfileUserHandle = workProfileUserHandle;
+        mCloneUserHandle = cloneUserHandle;
         mEmptyStateProvider = emptyStateProvider;
         mQuietModeManager = quietModeManager;
     }
@@ -160,6 +163,10 @@ public abstract class AbstractMultiProfilePagerAdapter extends PagerAdapter {
         return null;
     }
 
+    public UserHandle getCloneUserHandle() {
+        return mCloneUserHandle;
+    }
+
     /**
      * Returns the {@link ProfileDescriptor} relevant to the given <code>pageIndex</code>.
      * <ul>
@@ -170,7 +177,7 @@ public abstract class AbstractMultiProfilePagerAdapter extends PagerAdapter {
      * <code>1</code> would return the work profile {@link ProfileDescriptor}.</li>
      * </ul>
      */
-    abstract ProfileDescriptor getItem(int pageIndex);
+    public abstract ProfileDescriptor getItem(int pageIndex);
 
     /**
      * Returns the number of {@link ProfileDescriptor} objects.
@@ -431,8 +438,8 @@ public abstract class AbstractMultiProfilePagerAdapter extends PagerAdapter {
                     && isQuietModeEnabled(mWorkProfileUserHandle));
     }
 
-    protected class ProfileDescriptor {
-        final ViewGroup rootView;
+    public static class ProfileDescriptor {
+        public final ViewGroup rootView;
         private final ViewGroup mEmptyStateView;
         ProfileDescriptor(ViewGroup rootView) {
             this.rootView = rootView;

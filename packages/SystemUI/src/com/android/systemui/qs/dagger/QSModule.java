@@ -19,18 +19,21 @@ package com.android.systemui.qs.dagger;
 import static com.android.systemui.qs.dagger.QSFlagsModule.RBC_AVAILABLE;
 
 import android.content.Context;
-import android.hardware.display.NightDisplayListener;
 import android.os.Handler;
 
+import com.android.systemui.dagger.NightDisplayListenerModule;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.media.dagger.MediaModule;
 import com.android.systemui.qs.AutoAddTracker;
 import com.android.systemui.qs.QSHost;
-import com.android.systemui.qs.QSTileHost;
 import com.android.systemui.qs.ReduceBrightColorsController;
 import com.android.systemui.qs.external.QSExternalModule;
+import com.android.systemui.qs.pipeline.dagger.QSPipelineModule;
 import com.android.systemui.qs.tileimpl.QSTileImpl;
+import com.android.systemui.qs.tiles.di.QSTilesModule;
+import com.android.systemui.qs.ui.adapter.QSSceneAdapter;
+import com.android.systemui.qs.ui.adapter.QSSceneAdapterImpl;
 import com.android.systemui.statusbar.phone.AutoTileManager;
 import com.android.systemui.statusbar.phone.ManagedProfileController;
 import com.android.systemui.statusbar.policy.CastController;
@@ -53,12 +56,22 @@ import dagger.multibindings.Multibinds;
 /**
  * Module for QS dependencies
  */
-@Module(subcomponents = {QSFragmentComponent.class},
-        includes = {MediaModule.class, QSExternalModule.class, QSFlagsModule.class})
+@Module(subcomponents = {QSFragmentComponent.class, QSSceneComponent.class},
+        includes = {
+                MediaModule.class,
+                QSExternalModule.class,
+                QSFlagsModule.class,
+                QSHostModule.class,
+                QSPipelineModule.class,
+                QSTilesModule.class,
+        }
+)
 public interface QSModule {
 
-    /** A map of internal QS tiles. Ensures that this can be injected even if
-     * it is empty */
+    /**
+     * A map of internal QS tiles. Ensures that this can be injected even if
+     * it is empty
+     */
     @Multibinds
     Map<String, QSTileImpl<?>> tileMap();
 
@@ -73,7 +86,7 @@ public interface QSModule {
             HotspotController hotspotController,
             DataSaverController dataSaverController,
             ManagedProfileController managedProfileController,
-            NightDisplayListener nightDisplayListener,
+            NightDisplayListenerModule.Builder nightDisplayListenerBuilder,
             CastController castController,
             ReduceBrightColorsController reduceBrightColorsController,
             DeviceControlsController deviceControlsController,
@@ -89,7 +102,7 @@ public interface QSModule {
                 hotspotController,
                 dataSaverController,
                 managedProfileController,
-                nightDisplayListener,
+                nightDisplayListenerBuilder,
                 castController,
                 reduceBrightColorsController,
                 deviceControlsController,
@@ -101,7 +114,6 @@ public interface QSModule {
         return manager;
     }
 
-    /** */
     @Binds
-    QSHost provideQsHost(QSTileHost controllerImpl);
+    QSSceneAdapter bindsQsSceneInteractor(QSSceneAdapterImpl impl);
 }

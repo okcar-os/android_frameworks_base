@@ -29,15 +29,19 @@ import com.android.internal.logging.UiEventLogger
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.dump.DumpManager
+import com.android.systemui.flags.FakeFeatureFlags
+import com.android.systemui.flags.Flags
 import com.android.systemui.keyguard.KeyguardUnlockAnimationController
-import com.android.systemui.keyguard.ScreenLifecycle
 import com.android.systemui.keyguard.WakefulnessLifecycle
+import com.android.systemui.keyguard.ui.view.InWindowLauncherUnlockAnimationManager
 import com.android.systemui.model.SysUiState
 import com.android.systemui.navigationbar.NavigationBarController
 import com.android.systemui.navigationbar.NavigationModeController
 import com.android.systemui.recents.OverviewProxyService.ACTION_QUICKSTEP
+import com.android.systemui.scene.shared.flag.FakeSceneContainerFlags
 import com.android.systemui.settings.FakeDisplayTracker
 import com.android.systemui.settings.UserTracker
+import com.android.systemui.shade.ShadeViewController
 import com.android.systemui.shared.recents.IOverviewProxy
 import com.android.systemui.shared.system.QuickStepContract.SYSUI_STATE_WAKEFULNESS_MASK
 import com.android.systemui.shared.system.QuickStepContract.WAKEFULNESS_ASLEEP
@@ -46,13 +50,12 @@ import com.android.systemui.shared.system.QuickStepContract.WAKEFULNESS_GOING_TO
 import com.android.systemui.shared.system.QuickStepContract.WAKEFULNESS_WAKING
 import com.android.systemui.statusbar.CommandQueue
 import com.android.systemui.statusbar.NotificationShadeWindowController
-import com.android.systemui.statusbar.phone.CentralSurfaces
 import com.android.systemui.unfold.progress.UnfoldTransitionProgressForwarder
+import com.android.systemui.util.mockito.mock
 import com.android.systemui.util.mockito.whenever
 import com.android.systemui.util.time.FakeSystemClock
 import com.android.wm.shell.sysui.ShellInterface
 import com.google.common.util.concurrent.MoreExecutors
-import dagger.Lazy
 import java.util.Optional
 import java.util.concurrent.Executor
 import org.junit.After
@@ -81,7 +84,7 @@ class OverviewProxyServiceTest : SysuiTestCase() {
     private val displayTracker = FakeDisplayTracker(mContext)
     private val fakeSystemClock = FakeSystemClock()
     private val sysUiState = SysUiState(displayTracker)
-    private val screenLifecycle = ScreenLifecycle(dumpManager)
+    private val featureFlags = FakeFeatureFlags()
     private val wakefulnessLifecycle =
         WakefulnessLifecycle(mContext, null, fakeSystemClock, dumpManager)
 
@@ -92,12 +95,16 @@ class OverviewProxyServiceTest : SysuiTestCase() {
     @Mock private lateinit var commandQueue: CommandQueue
     @Mock private lateinit var shellInterface: ShellInterface
     @Mock private lateinit var navBarController: NavigationBarController
-    @Mock private lateinit var centralSurfaces: CentralSurfaces
+    @Mock private lateinit var shadeViewController: ShadeViewController
+    @Mock private lateinit var screenPinningRequest: ScreenPinningRequest
     @Mock private lateinit var navModeController: NavigationModeController
     @Mock private lateinit var statusBarWinController: NotificationShadeWindowController
     @Mock private lateinit var userTracker: UserTracker
     @Mock private lateinit var uiEventLogger: UiEventLogger
     @Mock private lateinit var sysuiUnlockAnimationController: KeyguardUnlockAnimationController
+    @Mock
+    private lateinit var inWindowLauncherUnlockAnimationManager:
+        InWindowLauncherUnlockAnimationManager
     @Mock private lateinit var assistUtils: AssistUtils
     @Mock
     private lateinit var unfoldTransitionProgressForwarder:
@@ -124,24 +131,29 @@ class OverviewProxyServiceTest : SysuiTestCase() {
         whenever(packageManager.resolveServiceAsUser(any(), anyInt(), anyInt()))
             .thenReturn(mock(ResolveInfo::class.java))
 
+        featureFlags.set(Flags.KEYGUARD_WM_STATE_REFACTOR, false)
         subject =
             OverviewProxyService(
                 context,
                 executor,
                 commandQueue,
                 shellInterface,
-                Lazy { navBarController },
-                Lazy { Optional.of(centralSurfaces) },
+                { navBarController },
+                { shadeViewController },
+                screenPinningRequest,
                 navModeController,
                 statusBarWinController,
                 sysUiState,
+                mock(),
                 userTracker,
-                screenLifecycle,
                 wakefulnessLifecycle,
                 uiEventLogger,
                 displayTracker,
                 sysuiUnlockAnimationController,
+                inWindowLauncherUnlockAnimationManager,
                 assistUtils,
+                featureFlags,
+                FakeSceneContainerFlags(),
                 dumpManager,
                 unfoldTransitionProgressForwarder
             )
@@ -153,7 +165,7 @@ class OverviewProxyServiceTest : SysuiTestCase() {
     }
 
     @Test
-    fun `WakefulnessLifecycle - dispatchFinishedWakingUp sets SysUI flag to AWAKE`() {
+    fun wakefulnessLifecycle_dispatchFinishedWakingUpSetsSysUIflagToAWAKE() {
         // WakefulnessLifecycle is initialized to AWAKE initially, and won't emit a noop.
         wakefulnessLifecycle.dispatchFinishedGoingToSleep()
         clearInvocations(overviewProxy)
@@ -167,7 +179,7 @@ class OverviewProxyServiceTest : SysuiTestCase() {
     }
 
     @Test
-    fun `WakefulnessLifecycle - dispatchStartedWakingUp sets SysUI flag to WAKING`() {
+    fun wakefulnessLifecycle_dispatchStartedWakingUpSetsSysUIflagToWAKING() {
         wakefulnessLifecycle.dispatchStartedWakingUp(PowerManager.WAKE_REASON_UNKNOWN)
 
         verify(overviewProxy)
@@ -177,7 +189,7 @@ class OverviewProxyServiceTest : SysuiTestCase() {
     }
 
     @Test
-    fun `WakefulnessLifecycle - dispatchFinishedGoingToSleep sets SysUI flag to ASLEEP`() {
+    fun wakefulnessLifecycle_dispatchFinishedGoingToSleepSetsSysUIflagToASLEEP() {
         wakefulnessLifecycle.dispatchFinishedGoingToSleep()
 
         verify(overviewProxy)
@@ -187,7 +199,7 @@ class OverviewProxyServiceTest : SysuiTestCase() {
     }
 
     @Test
-    fun `WakefulnessLifecycle - dispatchStartedGoingToSleep sets SysUI flag to GOING_TO_SLEEP`() {
+    fun wakefulnessLifecycle_dispatchStartedGoingToSleepSetsSysUIflagToGOING_TO_SLEEP() {
         wakefulnessLifecycle.dispatchStartedGoingToSleep(
             PowerManager.GO_TO_SLEEP_REASON_POWER_BUTTON
         )

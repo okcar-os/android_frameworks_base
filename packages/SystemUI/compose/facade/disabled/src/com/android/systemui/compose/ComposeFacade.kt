@@ -19,10 +19,17 @@ package com.android.systemui.compose
 
 import android.content.Context
 import android.view.View
+import android.view.WindowInsets
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.LifecycleOwner
+import com.android.systemui.communal.ui.viewmodel.BaseCommunalViewModel
 import com.android.systemui.people.ui.viewmodel.PeopleViewModel
 import com.android.systemui.qs.footer.ui.viewmodel.FooterActionsViewModel
+import com.android.systemui.scene.shared.model.Scene
+import com.android.systemui.scene.shared.model.SceneKey
+import com.android.systemui.scene.ui.viewmodel.SceneContainerViewModel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.StateFlow
 
 /** The Compose facade, when Compose is *not* available. */
 object ComposeFacade : BaseComposeFacade {
@@ -40,11 +47,41 @@ object ComposeFacade : BaseComposeFacade {
         throwComposeUnavailableError()
     }
 
+    override fun setCommunalEditWidgetActivityContent(
+        activity: ComponentActivity,
+        viewModel: BaseCommunalViewModel,
+        onOpenWidgetPicker: () -> Unit,
+        onEditDone: () -> Unit,
+    ) {
+        throwComposeUnavailableError()
+    }
+
     override fun createFooterActionsView(
         context: Context,
         viewModel: FooterActionsViewModel,
         qsVisibilityLifecycleOwner: LifecycleOwner
     ): View {
+        throwComposeUnavailableError()
+    }
+
+    override fun createSceneContainerView(
+        scope: CoroutineScope,
+        context: Context,
+        viewModel: SceneContainerViewModel,
+        windowInsets: StateFlow<WindowInsets?>,
+        sceneByKey: Map<SceneKey, Scene>,
+    ): View {
+        throwComposeUnavailableError()
+    }
+
+    override fun createCommunalView(
+        context: Context,
+        viewModel: BaseCommunalViewModel,
+    ): View {
+        throwComposeUnavailableError()
+    }
+
+    override fun createCommunalContainer(context: Context, viewModel: BaseCommunalViewModel): View {
         throwComposeUnavailableError()
     }
 

@@ -16,16 +16,19 @@
 
 package com.android.systemui.statusbar.pipeline.mobile.domain.interactor
 
+import android.content.Context
 import android.telephony.CarrierConfigManager
 import android.telephony.SubscriptionManager
+import android.telephony.SubscriptionManager.PROFILE_CLASS_PROVISIONING
 import com.android.settingslib.SignalIcon.MobileIconGroup
 import com.android.settingslib.mobile.TelephonyIcons
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
+import com.android.systemui.flags.FeatureFlagsClassic
+import com.android.systemui.flags.Flags.FILTER_PROVISIONING_NETWORK_SUBSCRIPTIONS
 import com.android.systemui.log.table.TableLogBuffer
 import com.android.systemui.log.table.logDiffsForTable
 import com.android.systemui.statusbar.pipeline.dagger.MobileSummaryLog
-import com.android.systemui.statusbar.pipeline.mobile.data.model.MobileConnectivityModel
 import com.android.systemui.statusbar.pipeline.mobile.data.model.SubscriptionModel
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.MobileConnectionRepository
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.MobileConnectionsRepository
@@ -33,6 +36,7 @@ import com.android.systemui.statusbar.pipeline.mobile.data.repository.UserSetupR
 import com.android.systemui.statusbar.pipeline.shared.data.model.ConnectivitySlot
 import com.android.systemui.statusbar.pipeline.shared.data.repository.ConnectivityRepository
 import com.android.systemui.util.CarrierConfigTracker
+import java.lang.ref.WeakReference
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -61,10 +65,20 @@ import kotlinx.coroutines.flow.transformLatest
  * icon
  */
 interface MobileIconsInteractor {
+    /** See [MobileConnectionsRepository.mobileIsDefault]. */
+    val mobileIsDefault: StateFlow<Boolean>
+
     /** List of subscriptions, potentially filtered for CBRS */
     val filteredSubscriptions: Flow<List<SubscriptionModel>>
+
     /** True if the active mobile data subscription has data enabled */
     val activeDataConnectionHasDataEnabled: StateFlow<Boolean>
+
+    /**
+     * Flow providing a reference to the Interactor for the active data subId. This represents the
+     * [MobileConnectionInteractor] responsible for the active data connection, if any.
+     */
+    val activeDataIconInteractor: StateFlow<MobileIconInteractor?>
 
     /** True if the RAT icon should always be displayed and false otherwise. */
     val alwaysShowDataRatIcon: StateFlow<Boolean>
@@ -72,23 +86,18 @@ interface MobileIconsInteractor {
     /** True if the CDMA level should be preferred over the primary level. */
     val alwaysUseCdmaLevel: StateFlow<Boolean>
 
-    /** Tracks the subscriptionId set as the default for data connections */
-    val defaultDataSubId: StateFlow<Int>
-
-    /**
-     * The connectivity of the default mobile network. Note that this can differ from what is
-     * reported from [MobileConnectionsRepository] in some cases. E.g., when the active subscription
-     * changes but the groupUuid remains the same, we keep the old validation information for 2
-     * seconds to avoid icon flickering.
-     */
-    val defaultMobileNetworkConnectivity: StateFlow<MobileConnectivityModel>
+    /** True if there is only one active subscription. */
+    val isSingleCarrier: StateFlow<Boolean>
 
     /** The icon mapping from network type to [MobileIconGroup] for the default subscription */
     val defaultMobileIconMapping: StateFlow<Map<String, MobileIconGroup>>
+
     /** Fallback [MobileIconGroup] in the case where there is no icon in the mapping */
     val defaultMobileIconGroup: StateFlow<MobileIconGroup>
+
     /** True only if the default network is mobile, and validation also failed */
     val isDefaultConnectionFailed: StateFlow<Boolean>
+
     /** True once the user has been set up */
     val isUserSetup: StateFlow<Boolean>
 
@@ -97,9 +106,9 @@ interface MobileIconsInteractor {
 
     /**
      * Vends out a [MobileIconInteractor] tracking the [MobileConnectionRepository] for the given
-     * subId. Will throw if the ID is invalid
+     * subId.
      */
-    fun createMobileConnectionInteractorForSubId(subId: Int): MobileIconInteractor
+    fun getMobileConnectionInteractorForSubId(subId: Int): MobileIconInteractor
 }
 
 @Suppress("EXPERIMENTAL_IS_NOT_ENABLED")
@@ -114,14 +123,62 @@ constructor(
     connectivityRepository: ConnectivityRepository,
     userSetupRepo: UserSetupRepository,
     @Application private val scope: CoroutineScope,
+    private val context: Context,
+    private val featureFlagsClassic: FeatureFlagsClassic,
 ) : MobileIconsInteractor {
+
+    // Weak reference lookup for created interactors
+    private val reuseCache = mutableMapOf<Int, WeakReference<MobileIconInteractor>>()
+
+    override val mobileIsDefault =
+        combine(
+                mobileConnectionsRepo.mobileIsDefault,
+                mobileConnectionsRepo.hasCarrierMergedConnection,
+            ) { mobileIsDefault, hasCarrierMergedConnection ->
+                // Because carrier merged networks are displayed as mobile networks, they're part of
+                // the `isDefault` calculation. See b/272586234.
+                mobileIsDefault || hasCarrierMergedConnection
+            }
+            .logDiffsForTable(
+                tableLogger,
+                LOGGING_PREFIX,
+                columnName = "mobileIsDefault",
+                initialValue = false,
+            )
+            .stateIn(scope, SharingStarted.WhileSubscribed(), false)
+
     override val activeDataConnectionHasDataEnabled: StateFlow<Boolean> =
         mobileConnectionsRepo.activeMobileDataRepository
             .flatMapLatest { it?.dataEnabled ?: flowOf(false) }
             .stateIn(scope, SharingStarted.WhileSubscribed(), false)
 
+    override val activeDataIconInteractor: StateFlow<MobileIconInteractor?> =
+        mobileConnectionsRepo.activeMobileDataSubscriptionId
+            .mapLatest {
+                if (it != null) {
+                    getMobileConnectionInteractorForSubId(it)
+                } else {
+                    null
+                }
+            }
+            .stateIn(scope, SharingStarted.WhileSubscribed(), null)
+
     private val unfilteredSubscriptions: Flow<List<SubscriptionModel>> =
         mobileConnectionsRepo.subscriptions
+
+    /**
+     * Any filtering that we can do based purely on the info of each subscription. Currently this
+     * only applies the ProfileClass-based filter, but if we need other they can go here
+     */
+    private val subscriptionsBasedFilteredSubs =
+        unfilteredSubscriptions.map { subs -> applyProvisioningFilter(subs) }.distinctUntilChanged()
+
+    private fun applyProvisioningFilter(subs: List<SubscriptionModel>): List<SubscriptionModel> =
+        if (!featureFlagsClassic.isEnabled(FILTER_PROVISIONING_NETWORK_SUBSCRIPTIONS)) {
+            subs
+        } else {
+            subs.filter { it.profileClass != PROFILE_CLASS_PROVISIONING }
+        }
 
     /**
      * Generally, SystemUI wants to show iconography for each subscription that is listed by
@@ -138,41 +195,15 @@ constructor(
      */
     override val filteredSubscriptions: Flow<List<SubscriptionModel>> =
         combine(
-                unfilteredSubscriptions,
+                subscriptionsBasedFilteredSubs,
                 mobileConnectionsRepo.activeMobileDataSubscriptionId,
-            ) { unfilteredSubs, activeId ->
-                // Based on the old logic,
-                if (unfilteredSubs.size != 2) {
-                    return@combine unfilteredSubs
-                }
-
-                val info1 = unfilteredSubs[0]
-                val info2 = unfilteredSubs[1]
-
-                // Filtering only applies to subscriptions in the same group
-                if (info1.groupUuid == null || info1.groupUuid != info2.groupUuid) {
-                    return@combine unfilteredSubs
-                }
-
-                // If both subscriptions are primary, show both
-                if (!info1.isOpportunistic && !info2.isOpportunistic) {
-                    return@combine unfilteredSubs
-                }
-
-                // NOTE: at this point, we are now returning a single SubscriptionInfo
-
-                // If carrier required, always show the icon of the primary subscription.
-                // Otherwise, show whichever subscription is currently active for internet.
-                if (carrierConfigTracker.alwaysShowPrimarySignalBarInOpportunisticNetworkDefault) {
-                    // return the non-opportunistic info
-                    return@combine if (info1.isOpportunistic) listOf(info2) else listOf(info1)
-                } else {
-                    return@combine if (info1.subscriptionId == activeId) {
-                        listOf(info1)
-                    } else {
-                        listOf(info2)
-                    }
-                }
+                connectivityRepository.vcnSubId,
+            ) { unfilteredSubs, activeId, vcnSubId ->
+                filterSubsBasedOnOpportunistic(
+                    unfilteredSubs,
+                    activeId,
+                    vcnSubId,
+                )
             }
             .distinctUntilChanged()
             .logDiffsForTable(
@@ -183,7 +214,50 @@ constructor(
             )
             .stateIn(scope, SharingStarted.WhileSubscribed(), listOf())
 
-    override val defaultDataSubId = mobileConnectionsRepo.defaultDataSubId
+    private fun filterSubsBasedOnOpportunistic(
+        subList: List<SubscriptionModel>,
+        activeId: Int?,
+        vcnSubId: Int?,
+    ): List<SubscriptionModel> {
+        // Based on the old logic,
+        if (subList.size != 2) {
+            return subList
+        }
+
+        val info1 = subList[0]
+        val info2 = subList[1]
+
+        // Filtering only applies to subscriptions in the same group
+        if (info1.groupUuid == null || info1.groupUuid != info2.groupUuid) {
+            return subList
+        }
+
+        // If both subscriptions are primary, show both
+        if (!info1.isOpportunistic && !info2.isOpportunistic) {
+            return subList
+        }
+
+        // NOTE: at this point, we are now returning a single SubscriptionInfo
+
+        // If carrier required, always show the icon of the primary subscription.
+        // Otherwise, show whichever subscription is currently active for internet.
+        if (carrierConfigTracker.alwaysShowPrimarySignalBarInOpportunisticNetworkDefault) {
+            // return the non-opportunistic info
+            return if (info1.isOpportunistic) listOf(info2) else listOf(info1)
+        } else {
+            // It's possible for the subId of the VCN to disagree with the active subId in
+            // cases where the system has tried to switch but found no connection. In these
+            // scenarios, VCN will always have the subId that we want to use, so use that
+            // value instead of the activeId reported by telephony
+            val subIdToKeep = vcnSubId ?: activeId
+
+            return if (info1.subscriptionId == subIdToKeep) {
+                listOf(info1)
+            } else {
+                listOf(info2)
+            }
+        }
+    }
 
     /**
      * Copied from the old pipeline. We maintain a 2s period of time where we will keep the
@@ -197,7 +271,7 @@ constructor(
      */
     private val forcingCellularValidation =
         mobileConnectionsRepo.activeSubChangedInGroupEvent
-            .filter { mobileConnectionsRepo.defaultMobileNetworkConnectivity.value.isValidated }
+            .filter { mobileConnectionsRepo.defaultConnectionIsValidated.value }
             .transformLatest {
                 emit(true)
                 delay(2000)
@@ -210,32 +284,6 @@ constructor(
                 initialValue = false,
             )
             .stateIn(scope, SharingStarted.WhileSubscribed(), false)
-
-    override val defaultMobileNetworkConnectivity: StateFlow<MobileConnectivityModel> =
-        combine(
-                mobileConnectionsRepo.defaultMobileNetworkConnectivity,
-                forcingCellularValidation,
-            ) { networkConnectivity, forceValidation ->
-                return@combine if (forceValidation) {
-                    MobileConnectivityModel(
-                        isValidated = true,
-                        isConnected = networkConnectivity.isConnected
-                    )
-                } else {
-                    networkConnectivity
-                }
-            }
-            .distinctUntilChanged()
-            .logDiffsForTable(
-                tableLogger,
-                columnPrefix = "$LOGGING_PREFIX.defaultConnection",
-                initialValue = mobileConnectionsRepo.defaultMobileNetworkConnectivity.value,
-            )
-            .stateIn(
-                scope,
-                SharingStarted.WhileSubscribed(),
-                mobileConnectionsRepo.defaultMobileNetworkConnectivity.value
-            )
 
     /**
      * Mapping from network type to [MobileIconGroup] using the config generated for the default
@@ -258,6 +306,17 @@ constructor(
             .mapLatest { it.alwaysShowCdmaRssi }
             .stateIn(scope, SharingStarted.WhileSubscribed(), false)
 
+    override val isSingleCarrier: StateFlow<Boolean> =
+        mobileConnectionsRepo.subscriptions
+            .map { it.size == 1 }
+            .logDiffsForTable(
+                tableLogger,
+                columnPrefix = LOGGING_PREFIX,
+                columnName = "isSingleCarrier",
+                initialValue = false,
+            )
+            .stateIn(scope, SharingStarted.WhileSubscribed(), false)
+
     /** If there is no mapping in [defaultMobileIconMapping], then use this default icon group */
     override val defaultMobileIconGroup: StateFlow<MobileIconGroup> =
         mobileConnectionsRepo.defaultMobileIconGroup.stateIn(
@@ -271,12 +330,15 @@ constructor(
      * other transport type is active, because then we expect there not to be validation.
      */
     override val isDefaultConnectionFailed: StateFlow<Boolean> =
-        mobileConnectionsRepo.defaultMobileNetworkConnectivity
-            .mapLatest { connectivityModel ->
-                if (!connectivityModel.isConnected) {
-                    false
-                } else {
-                    !connectivityModel.isValidated
+        combine(
+                mobileIsDefault,
+                mobileConnectionsRepo.defaultConnectionIsValidated,
+                forcingCellularValidation,
+            ) { mobileIsDefault, defaultConnectionIsValidated, forcingCellularValidation ->
+                when {
+                    !mobileIsDefault -> false
+                    forcingCellularValidation -> false
+                    else -> !defaultConnectionIsValidated
                 }
             }
             .logDiffsForTable(
@@ -295,20 +357,25 @@ constructor(
             .stateIn(scope, SharingStarted.WhileSubscribed(), false)
 
     /** Vends out new [MobileIconInteractor] for a particular subId */
-    override fun createMobileConnectionInteractorForSubId(subId: Int): MobileIconInteractor =
+    override fun getMobileConnectionInteractorForSubId(subId: Int): MobileIconInteractor =
+        reuseCache[subId]?.get() ?: createMobileConnectionInteractorForSubId(subId)
+
+    private fun createMobileConnectionInteractorForSubId(subId: Int): MobileIconInteractor =
         MobileIconInteractorImpl(
-            scope,
-            activeDataConnectionHasDataEnabled,
-            alwaysShowDataRatIcon,
-            alwaysUseCdmaLevel,
-            defaultMobileNetworkConnectivity,
-            defaultMobileIconMapping,
-            defaultMobileIconGroup,
-            defaultDataSubId,
-            isDefaultConnectionFailed,
-            isForceHidden,
-            mobileConnectionsRepo.getRepoForSubId(subId),
-        )
+                scope,
+                activeDataConnectionHasDataEnabled,
+                alwaysShowDataRatIcon,
+                alwaysUseCdmaLevel,
+                isSingleCarrier,
+                mobileIsDefault,
+                defaultMobileIconMapping,
+                defaultMobileIconGroup,
+                isDefaultConnectionFailed,
+                isForceHidden,
+                mobileConnectionsRepo.getRepoForSubId(subId),
+                context,
+            )
+            .also { reuseCache[subId] = WeakReference(it) }
 
     companion object {
         private const val LOGGING_PREFIX = "Intr"

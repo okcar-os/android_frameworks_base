@@ -16,6 +16,10 @@
 
 package com.android.systemui.wallpapers;
 
+import static android.app.WallpaperManager.FLAG_LOCK;
+import static android.app.WallpaperManager.FLAG_SYSTEM;
+import static android.app.WallpaperManager.SetWallpaperFlags;
+
 import android.app.WallpaperColors;
 import android.app.WallpaperManager;
 import android.graphics.Bitmap;
@@ -25,6 +29,8 @@ import android.graphics.Rect;
 import android.graphics.RectF;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.DisplayManager.DisplayListener;
+import android.os.HandlerThread;
+import android.os.Looper;
 import android.os.Trace;
 import android.service.wallpaper.WallpaperService;
 import android.util.Log;
@@ -60,6 +66,10 @@ public class ImageWallpaper extends WallpaperService {
 
     private final UserTracker mUserTracker;
 
+    // used to handle WallpaperService messages (e.g. DO_ATTACH, MSG_UPDATE_SURFACE)
+    // and to receive WallpaperService callbacks (e.g. onCreateEngine, onSurfaceRedrawNeeded)
+    private HandlerThread mWorker;
+
     // used for most tasks (call canvas.drawBitmap, load/unload the bitmap)
     @LongRunning
     private final DelayableExecutor mLongExecutor;
@@ -75,6 +85,22 @@ public class ImageWallpaper extends WallpaperService {
     }
 
     @Override
+    public Looper onProvideEngineLooper() {
+        // Receive messages on mWorker thread instead of SystemUI's main handler.
+        // All other wallpapers have their own process, and they can receive messages on their own
+        // main handler without any delay. But since ImageWallpaper lives in SystemUI, performance
+        // of the image wallpaper could be negatively affected when SystemUI's main handler is busy.
+        return mWorker != null ? mWorker.getLooper() : super.onProvideEngineLooper();
+    }
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        mWorker = new HandlerThread(TAG);
+        mWorker.start();
+    }
+
+    @Override
     public Engine onCreateEngine() {
         return new CanvasEngine();
     }
@@ -83,6 +109,7 @@ public class ImageWallpaper extends WallpaperService {
         private WallpaperManager mWallpaperManager;
         private final WallpaperLocalColorExtractor mWallpaperLocalColorExtractor;
         private SurfaceHolder mSurfaceHolder;
+        private boolean mDrawn = false;
         @VisibleForTesting
         static final int MIN_SURFACE_WIDTH = 128;
         @VisibleForTesting
@@ -105,6 +132,7 @@ public class ImageWallpaper extends WallpaperService {
             setShowForAllUsers(true);
             mWallpaperLocalColorExtractor = new WallpaperLocalColorExtractor(
                     mLongExecutor,
+                    mLock,
                     new WallpaperLocalColorExtractor.WallpaperLocalColorExtractorCallback() {
                         @Override
                         public void onColorsProcessed(List<RectF> regions,
@@ -142,7 +170,7 @@ public class ImageWallpaper extends WallpaperService {
             }
             mWallpaperManager = getDisplayContext().getSystemService(WallpaperManager.class);
             mSurfaceHolder = surfaceHolder;
-            Rect dimensions = mWallpaperManager.peekBitmapDimensions();
+            Rect dimensions = mWallpaperManager.peekBitmapDimensions(getSourceFlag(), true);
             int width = Math.max(MIN_SURFACE_WIDTH, dimensions.width());
             int height = Math.max(MIN_SURFACE_HEIGHT, dimensions.height());
             mSurfaceHolder.setFixedSize(width, height);
@@ -206,6 +234,7 @@ public class ImageWallpaper extends WallpaperService {
 
         private void drawFrameSynchronized() {
             synchronized (mLock) {
+                if (mDrawn) return;
                 drawFrameInternal();
             }
         }
@@ -243,6 +272,7 @@ public class ImageWallpaper extends WallpaperService {
                 Rect dest = mSurfaceHolder.getSurfaceFrame();
                 try {
                     canvas.drawBitmap(bitmap, null, dest, null);
+                    mDrawn = true;
                 } finally {
                     surface.unlockCanvasAndPost(canvas);
                 }
@@ -291,7 +321,8 @@ public class ImageWallpaper extends WallpaperService {
             boolean loadSuccess = false;
             Bitmap bitmap;
             try {
-                bitmap = mWallpaperManager.getBitmapAsUser(mUserTracker.getUserId(), false);
+                bitmap = mWallpaperManager.getBitmapAsUser(
+                        mUserTracker.getUserId(), false, getSourceFlag(), true);
                 if (bitmap != null
                         && bitmap.getByteCount() > RecordingCanvas.MAX_BITMAP_SIZE) {
                     throw new RuntimeException("Wallpaper is too large to draw!");
@@ -302,10 +333,11 @@ public class ImageWallpaper extends WallpaperService {
                 // be loaded, we will go into a cycle. Don't do a build where the
                 // default wallpaper can't be loaded.
                 Log.w(TAG, "Unable to load wallpaper!", exception);
-                mWallpaperManager.clearWallpaper(
-                        WallpaperManager.FLAG_SYSTEM, mUserTracker.getUserId());
+                mWallpaperManager.clearWallpaper(getWallpaperFlags(), mUserTracker.getUserId());
+
                 try {
-                    bitmap = mWallpaperManager.getBitmapAsUser(mUserTracker.getUserId(), false);
+                    bitmap = mWallpaperManager.getBitmapAsUser(
+                            mUserTracker.getUserId(), false, getSourceFlag(), true);
                 } catch (RuntimeException | OutOfMemoryError e) {
                     Log.w(TAG, "Unable to load default wallpaper!", e);
                     bitmap = null;
@@ -326,8 +358,7 @@ public class ImageWallpaper extends WallpaperService {
                     mBitmap.recycle();
                 }
                 mBitmap = bitmap;
-                mWideColorGamut = mWallpaperManager.wallpaperSupportsWcg(
-                        WallpaperManager.FLAG_SYSTEM);
+                mWideColorGamut = mWallpaperManager.wallpaperSupportsWcg(getSourceFlag());
 
                 // +2 usages for the color extraction and the delayed unload.
                 mBitmapUsages += 2;
@@ -354,6 +385,15 @@ public class ImageWallpaper extends WallpaperService {
             } catch (RuntimeException e) {
                 Log.e(TAG, e.getMessage(), e);
             }
+        }
+
+        /**
+         * Helper to return the flag from where the source bitmap is from.
+         * Similar to {@link #getWallpaperFlags()}, but returns (FLAG_SYSTEM) instead of
+         * (FLAG_LOCK | FLAG_SYSTEM) if this engine is used for both lock screen & home screen.
+         */
+        private @SetWallpaperFlags int getSourceFlag() {
+            return getWallpaperFlags() == FLAG_LOCK ? FLAG_LOCK : FLAG_SYSTEM;
         }
 
         @VisibleForTesting

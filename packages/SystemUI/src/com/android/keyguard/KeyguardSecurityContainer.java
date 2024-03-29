@@ -32,7 +32,7 @@ import static androidx.constraintlayout.widget.ConstraintSet.START;
 import static androidx.constraintlayout.widget.ConstraintSet.TOP;
 import static androidx.constraintlayout.widget.ConstraintSet.WRAP_CONTENT;
 
-import static com.android.systemui.animation.InterpolatorsAndroidX.DECELERATE_QUINT;
+import static com.android.app.animation.InterpolatorsAndroidX.DECELERATE_QUINT;
 import static com.android.systemui.plugins.FalsingManager.LOW_PENALTY;
 
 import static java.lang.Integer.max;
@@ -54,6 +54,7 @@ import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
+import android.graphics.drawable.Icon;
 import android.graphics.drawable.LayerDrawable;
 import android.os.UserManager;
 import android.provider.Settings;
@@ -86,6 +87,7 @@ import androidx.constraintlayout.widget.ConstraintSet;
 import androidx.dynamicanimation.animation.DynamicAnimation;
 import androidx.dynamicanimation.animation.SpringAnimation;
 
+import com.android.app.animation.Interpolators;
 import com.android.internal.jank.InteractionJankMonitor;
 import com.android.internal.logging.UiEvent;
 import com.android.internal.logging.UiEventLogger;
@@ -95,10 +97,10 @@ import com.android.keyguard.KeyguardSecurityModel.SecurityMode;
 import com.android.settingslib.Utils;
 import com.android.settingslib.drawable.CircleFramedDrawable;
 import com.android.systemui.Gefingerpoken;
-import com.android.systemui.R;
-import com.android.systemui.animation.Interpolators;
 import com.android.systemui.classifier.FalsingA11yDelegate;
 import com.android.systemui.plugins.FalsingManager;
+import com.android.systemui.res.R;
+import com.android.systemui.shade.TouchLogger;
 import com.android.systemui.shared.system.SysUiStatsLog;
 import com.android.systemui.statusbar.policy.BaseUserSwitcherAdapter;
 import com.android.systemui.statusbar.policy.UserSwitcherController;
@@ -280,6 +282,8 @@ public class KeyguardSecurityContainer extends ConstraintLayout {
 
     public interface SwipeListener {
         void onSwipeUp();
+        /** */
+        void onSwipeDown();
     }
 
     @VisibleForTesting
@@ -333,6 +337,11 @@ public class KeyguardSecurityContainer extends ConstraintLayout {
         mSpringAnimation = new SpringAnimation(this, DynamicAnimation.TRANSLATION_Y);
         mViewConfiguration = ViewConfiguration.get(context);
         mDoubleTapDetector = new GestureDetector(context, new DoubleTapListener());
+
+        // Add additional top padding.
+        setPadding(getPaddingLeft(), getPaddingTop() + getResources().getDimensionPixelSize(
+                        R.dimen.keyguard_security_container_padding_top), getPaddingRight(),
+                getPaddingBottom());
     }
 
     void onResume(SecurityMode securityMode, boolean faceAuthEnabled) {
@@ -468,7 +477,8 @@ public class KeyguardSecurityContainer extends ConstraintLayout {
                     return false;
                 }
                 // Avoid dragging the pattern view
-                if (mSecurityViewFlipper.getSecurityView().disallowInterceptTouch(event)) {
+                if (mSecurityViewFlipper.getSecurityView() != null
+                        && mSecurityViewFlipper.getSecurityView().disallowInterceptTouch(event)) {
                     return false;
                 }
                 int index = event.findPointerIndex(mActivePointerId);
@@ -536,6 +546,11 @@ public class KeyguardSecurityContainer extends ConstraintLayout {
                 if (mSwipeListener != null) {
                     mSwipeListener.onSwipeUp();
                 }
+            } else if (getTranslationY() > TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,
+                    MIN_DRAG_SIZE, getResources().getDisplayMetrics())) {
+                if (mSwipeListener != null) {
+                    mSwipeListener.onSwipeDown();
+                }
             }
         }
         return true;
@@ -593,7 +608,6 @@ public class KeyguardSecurityContainer extends ConstraintLayout {
      */
     public void startAppearAnimation(SecurityMode securityMode) {
         setTranslationY(0f);
-        setAlpha(1f);
         updateChildren(0 /* translationY */, 1f /* alpha */);
         mViewMode.startAppearAnimation(securityMode);
     }
@@ -650,6 +664,11 @@ public class KeyguardSecurityContainer extends ConstraintLayout {
             setPadding(getPaddingLeft(), getPaddingTop(), getPaddingRight(), paddingBottom);
         }
         return insets.inset(0, 0, 0, inset);
+    }
+
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent ev) {
+        return TouchLogger.logDispatchTouch(TAG, ev, super.dispatchTouchEvent(ev));
     }
 
     @Override
@@ -1022,11 +1041,15 @@ public class KeyguardSecurityContainer extends ConstraintLayout {
             mUserSwitcherController.removeUserSwitchCallback(mUserSwitchCallback);
         }
 
-        private Drawable findUserIcon(int userId) {
+        private Drawable findLargeUserIcon(int userId) {
             Bitmap userIcon = UserManager.get(mView.getContext()).getUserIcon(userId);
             if (userIcon != null) {
-                return CircleFramedDrawable.getInstance(mView.getContext(),
-                        userIcon);
+                int iconSize =
+                        mResources.getDimensionPixelSize(R.dimen.bouncer_user_switcher_icon_size);
+                return CircleFramedDrawable.getInstance(
+                    mView.getContext(),
+                    Icon.scaleDownIfNecessary(userIcon, iconSize, iconSize)
+                );
             }
 
             return UserIcons.getDefaultUserIcon(mResources, userId, false);
@@ -1085,7 +1108,7 @@ public class KeyguardSecurityContainer extends ConstraintLayout {
                 return;
             }
             final String currentUserName = mUserSwitcherController.getCurrentUserName();
-            Drawable userIcon = findUserIcon(currentUser.info.id);
+            Drawable userIcon = findLargeUserIcon(currentUser.info.id);
             ((ImageView) mView.findViewById(R.id.user_icon)).setImageDrawable(userIcon);
             mUserSwitcher.setText(currentUserName);
 
@@ -1150,7 +1173,8 @@ public class KeyguardSecurityContainer extends ConstraintLayout {
                     }
                     drawable.setTint(iconColor);
 
-                    Drawable bg = context.getDrawable(R.drawable.user_avatar_bg);
+                    Drawable bg = context.getDrawable(
+                            com.android.settingslib.R.drawable.user_avatar_bg);
                     bg.setTintBlendMode(BlendMode.DST);
                     bg.setTint(Utils.getColorAttrDefaultColor(context,
                                 com.android.internal.R.attr.colorSurfaceVariant));
@@ -1167,6 +1191,7 @@ public class KeyguardSecurityContainer extends ConstraintLayout {
                 mPopup.setOnItemClickListener((parent, view, pos, id) -> {
                     if (mFalsingManager.isFalseTap(LOW_PENALTY)) return;
                     if (!view.isEnabled()) return;
+                    if (mPopup == null) return;
                     // Subtract one for the header
                     UserRecord user = adapter.getItem(pos - 1);
                     if (user.isManageUsers || user.isAddSupervisedUser) {
@@ -1215,15 +1240,16 @@ public class KeyguardSecurityContainer extends ConstraintLayout {
                 constraintSet.constrainHeight(mViewFlipper.getId(), MATCH_CONSTRAINT);
                 constraintSet.applyTo(mView);
             } else {
-                int leftElement = leftAlign ? mViewFlipper.getId() : mUserSwitcherViewGroup.getId();
-                int rightElement =
+                int startElement =
+                        leftAlign ? mViewFlipper.getId() : mUserSwitcherViewGroup.getId();
+                int endElement =
                         leftAlign ? mUserSwitcherViewGroup.getId() : mViewFlipper.getId();
 
                 ConstraintSet constraintSet = new ConstraintSet();
-                constraintSet.connect(leftElement, LEFT, PARENT_ID, LEFT);
-                constraintSet.connect(leftElement, RIGHT, rightElement, LEFT);
-                constraintSet.connect(rightElement, LEFT, leftElement, RIGHT);
-                constraintSet.connect(rightElement, RIGHT, PARENT_ID, RIGHT);
+                constraintSet.connect(startElement, START, PARENT_ID, START);
+                constraintSet.connect(startElement, END, endElement, START);
+                constraintSet.connect(endElement, START, startElement, END);
+                constraintSet.connect(endElement, END, PARENT_ID, END);
                 constraintSet.connect(mUserSwitcherViewGroup.getId(), TOP, PARENT_ID, TOP);
                 constraintSet.connect(mUserSwitcherViewGroup.getId(), BOTTOM, PARENT_ID, BOTTOM);
                 constraintSet.connect(mViewFlipper.getId(), TOP, PARENT_ID, TOP);

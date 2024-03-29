@@ -35,6 +35,12 @@ enum class KeyguardState {
      * parties to present their own UI over keyguard, like a screensaver.
      */
     DREAMING,
+    /*
+     * A device state after the device times out, which can be from both LOCKSCREEN or GONE states.
+     * It is a special version of DREAMING state but not DOZING. The active dream will be windowless
+     * and hosted in the lockscreen.
+     */
+    DREAMING_LOCKSCREEN_HOSTED,
     /**
      * The device has entered a special low-power mode within SystemUI, also called the Always-on
      * Display (AOD). A minimal UI is presented to show critical information. If the device is in
@@ -65,5 +71,40 @@ enum class KeyguardState {
     /*
      * An activity is displaying over the keyguard.
      */
-    OCCLUDED,
+    OCCLUDED;
+
+    companion object {
+
+        /** Whether the lockscreen is visible when we're FINISHED in the given state. */
+        fun lockscreenVisibleInState(state: KeyguardState): Boolean {
+            return state != GONE
+        }
+
+        /**
+         * Whether the device is awake ([PowerInteractor.isAwake]) when we're FINISHED in the given
+         * keyguard state.
+         */
+        fun deviceIsAwakeInState(state: KeyguardState): Boolean {
+            return when (state) {
+                OFF -> false
+                DOZING -> false
+                DREAMING -> false
+                DREAMING_LOCKSCREEN_HOSTED -> false
+                AOD -> false
+                ALTERNATE_BOUNCER -> true
+                PRIMARY_BOUNCER -> true
+                LOCKSCREEN -> true
+                GONE -> true
+                OCCLUDED -> true
+            }
+        }
+
+        /**
+         * Whether the device is awake ([PowerInteractor.isAsleep]) when we're FINISHED in the given
+         * keyguard state.
+         */
+        fun deviceIsAsleepInState(state: KeyguardState): Boolean {
+            return !deviceIsAwakeInState(state)
+        }
+    }
 }

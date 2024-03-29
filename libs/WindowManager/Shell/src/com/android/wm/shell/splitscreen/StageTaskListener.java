@@ -19,6 +19,7 @@ package com.android.wm.shell.splitscreen;
 import static android.app.ActivityTaskManager.INVALID_TASK_ID;
 import static android.app.WindowConfiguration.WINDOWING_MODE_MULTI_WINDOW;
 import static android.app.WindowConfiguration.WINDOWING_MODE_UNDEFINED;
+import static android.content.res.Configuration.SMALLEST_SCREEN_WIDTH_DP_UNDEFINED;
 import static android.view.RemoteAnimationTarget.MODE_OPENING;
 
 import static com.android.wm.shell.common.split.SplitScreenConstants.CONTROLLED_ACTIVITY_TYPES;
@@ -50,8 +51,11 @@ import com.android.wm.shell.common.SurfaceUtils;
 import com.android.wm.shell.common.SyncTransactionQueue;
 import com.android.wm.shell.common.split.SplitDecorManager;
 import com.android.wm.shell.splitscreen.SplitScreen.StageType;
+import com.android.wm.shell.windowdecor.WindowDecorViewModel;
 
 import java.io.PrintWriter;
+import java.util.Optional;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 
 /**
@@ -78,7 +82,7 @@ class StageTaskListener implements ShellTaskOrganizer.TaskListener {
 
         void onRootTaskVanished();
 
-        void onNoLongerSupportMultiWindow();
+        void onNoLongerSupportMultiWindow(ActivityManager.RunningTaskInfo taskInfo);
     }
 
     private final Context mContext;
@@ -86,6 +90,7 @@ class StageTaskListener implements ShellTaskOrganizer.TaskListener {
     private final SurfaceSession mSurfaceSession;
     private final SyncTransactionQueue mSyncQueue;
     private final IconProvider mIconProvider;
+    private final Optional<WindowDecorViewModel> mWindowDecorViewModel;
 
     protected ActivityManager.RunningTaskInfo mRootTaskInfo;
     protected SurfaceControl mRootLeash;
@@ -97,12 +102,14 @@ class StageTaskListener implements ShellTaskOrganizer.TaskListener {
 
     StageTaskListener(Context context, ShellTaskOrganizer taskOrganizer, int displayId,
             StageListenerCallbacks callbacks, SyncTransactionQueue syncQueue,
-            SurfaceSession surfaceSession, IconProvider iconProvider) {
+            SurfaceSession surfaceSession, IconProvider iconProvider,
+            Optional<WindowDecorViewModel> windowDecorViewModel) {
         mContext = context;
         mCallbacks = callbacks;
         mSyncQueue = syncQueue;
         mSurfaceSession = surfaceSession;
         mIconProvider = iconProvider;
+        mWindowDecorViewModel = windowDecorViewModel;
         taskOrganizer.createRootTask(displayId, WINDOWING_MODE_MULTI_WINDOW, this);
     }
 
@@ -126,7 +133,8 @@ class StageTaskListener implements ShellTaskOrganizer.TaskListener {
      * Returns the top visible child task's id.
      */
     int getTopVisibleChildTaskId() {
-        final ActivityManager.RunningTaskInfo taskInfo = getChildTaskInfo(t -> t.isVisible);
+        final ActivityManager.RunningTaskInfo taskInfo = getChildTaskInfo(t -> t.isVisible
+                && t.isVisibleRequested);
         return taskInfo != null ? taskInfo.taskId : INVALID_TASK_ID;
     }
 
@@ -182,12 +190,13 @@ class StageTaskListener implements ShellTaskOrganizer.TaskListener {
             final int taskId = taskInfo.taskId;
             mChildrenLeashes.put(taskId, leash);
             mChildrenTaskInfo.put(taskId, taskInfo);
-            updateChildTaskSurface(taskInfo, leash, true /* firstAppeared */);
-            mCallbacks.onChildTaskStatusChanged(taskId, true /* present */, taskInfo.isVisible);
+            mCallbacks.onChildTaskStatusChanged(taskId, true /* present */,
+                    taskInfo.isVisible && taskInfo.isVisibleRequested);
             if (ENABLE_SHELL_TRANSITIONS) {
                 // Status is managed/synchronized by the transition lifecycle.
                 return;
             }
+            updateChildTaskSurface(taskInfo, leash, true /* firstAppeared */);
             mCallbacks.onChildTaskAppeared(taskId);
             sendStatusChanged();
         } else {
@@ -199,9 +208,10 @@ class StageTaskListener implements ShellTaskOrganizer.TaskListener {
     @Override
     @CallSuper
     public void onTaskInfoChanged(ActivityManager.RunningTaskInfo taskInfo) {
+        mWindowDecorViewModel.ifPresent(viewModel -> viewModel.onTaskInfoChanged(taskInfo));
         if (mRootTaskInfo.taskId == taskInfo.taskId) {
             // Inflates split decor view only when the root task is visible.
-            if (mRootTaskInfo.isVisible != taskInfo.isVisible) {
+            if (!ENABLE_SHELL_TRANSITIONS && mRootTaskInfo.isVisible != taskInfo.isVisible) {
                 if (taskInfo.isVisible) {
                     mSplitDecorManager.inflate(mContext, mRootLeash,
                             taskInfo.configuration.windowConfiguration.getBounds());
@@ -217,12 +227,12 @@ class StageTaskListener implements ShellTaskOrganizer.TaskListener {
                     taskInfo.getWindowingMode())) {
                 // Leave split screen if the task no longer supports multi window or have
                 // uncontrolled task.
-                mCallbacks.onNoLongerSupportMultiWindow();
+                mCallbacks.onNoLongerSupportMultiWindow(taskInfo);
                 return;
             }
             mChildrenTaskInfo.put(taskInfo.taskId, taskInfo);
             mCallbacks.onChildTaskStatusChanged(taskInfo.taskId, true /* present */,
-                    taskInfo.isVisible);
+                    taskInfo.isVisible && taskInfo.isVisibleRequested);
             if (!ENABLE_SHELL_TRANSITIONS) {
                 updateChildTaskSurface(
                         taskInfo, mChildrenLeashes.get(taskInfo.taskId), false /* firstAppeared */);
@@ -286,6 +296,10 @@ class StageTaskListener implements ShellTaskOrganizer.TaskListener {
         }
     }
 
+    boolean isRootTaskId(int taskId) {
+        return mRootTaskInfo != null && mRootTaskInfo.taskId == taskId;
+    }
+
     void onResizing(Rect newBounds, Rect sideBounds, SurfaceControl.Transaction t, int offsetX,
             int offsetY, boolean immediately) {
         if (mSplitDecorManager != null && mRootTaskInfo != null) {
@@ -334,6 +348,13 @@ class StageTaskListener implements ShellTaskOrganizer.TaskListener {
         wct.reorder(mChildrenTaskInfo.get(taskId).token, onTop /* onTop */);
     }
 
+    void doForAllChildTasks(Consumer<Integer> consumer) {
+        for (int i = mChildrenTaskInfo.size() - 1; i >= 0; i--) {
+            final ActivityManager.RunningTaskInfo taskInfo = mChildrenTaskInfo.valueAt(i);
+            consumer.accept(taskInfo.taskId);
+        }
+    }
+
     /** Collects all the current child tasks and prepares transaction to evict them to display. */
     void evictAllChildren(WindowContainerTransaction wct) {
         for (int i = mChildrenTaskInfo.size() - 1; i >= 0; i--) {
@@ -372,6 +393,13 @@ class StageTaskListener implements ShellTaskOrganizer.TaskListener {
         }
     }
 
+    void evictChildren(WindowContainerTransaction wct, int taskId) {
+        final ActivityManager.RunningTaskInfo taskInfo = mChildrenTaskInfo.get(taskId);
+        if (taskInfo != null) {
+            wct.reparent(taskInfo.token, null /* parent */, false /* onTop */);
+        }
+    }
+
     void reparentTopTask(WindowContainerTransaction wct) {
         wct.reparentTasks(null /* currentParent */, mRootTaskInfo.token,
                 CONTROLLED_WINDOWING_MODES, CONTROLLED_ACTIVITY_TYPES,
@@ -381,6 +409,7 @@ class StageTaskListener implements ShellTaskOrganizer.TaskListener {
     void resetBounds(WindowContainerTransaction wct) {
         wct.setBounds(mRootTaskInfo.token, null);
         wct.setAppBounds(mRootTaskInfo.token, null);
+        wct.setSmallestScreenWidthDp(mRootTaskInfo.token, SMALLEST_SCREEN_WIDTH_DP_UNDEFINED);
     }
 
     void onSplitScreenListenerRegistered(SplitScreen.SplitScreenListener listener,
@@ -404,7 +433,7 @@ class StageTaskListener implements ShellTaskOrganizer.TaskListener {
             }
             t.setCrop(leash, null);
             t.setPosition(leash, taskPositionInParent.x, taskPositionInParent.y);
-            if (firstAppeared && !ENABLE_SHELL_TRANSITIONS) {
+            if (firstAppeared) {
                 t.setAlpha(leash, 1f);
                 t.setMatrix(leash, 1, 0, 0, 1);
                 t.show(leash);
@@ -421,6 +450,13 @@ class StageTaskListener implements ShellTaskOrganizer.TaskListener {
     public void dump(@NonNull PrintWriter pw, String prefix) {
         final String innerPrefix = prefix + "  ";
         final String childPrefix = innerPrefix + "  ";
-        pw.println(prefix + this);
+        if (mChildrenTaskInfo.size() > 0) {
+            pw.println(prefix + "Children list:");
+            for (int i = mChildrenTaskInfo.size() - 1; i >= 0; --i) {
+                final ActivityManager.RunningTaskInfo taskInfo = mChildrenTaskInfo.valueAt(i);
+                pw.println(childPrefix + "Task#" + i + " taskID=" + taskInfo.taskId
+                        + " baseActivity=" + taskInfo.baseActivity);
+            }
+        }
     }
 }

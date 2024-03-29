@@ -80,8 +80,9 @@ public class StartingWindowControllerTests extends ShellTestCase {
         MockitoAnnotations.initMocks(this);
         doReturn(mock(Display.class)).when(mDisplayManager).getDisplay(anyInt());
         doReturn(mDisplayManager).when(mContext).getSystemService(eq(DisplayManager.class));
+        doReturn(super.mContext.getResources()).when(mContext).getResources();
         mShellInit = spy(new ShellInit(mMainExecutor));
-        mShellController = spy(new ShellController(mShellInit, mShellCommandHandler,
+        mShellController = spy(new ShellController(mContext, mShellInit, mShellCommandHandler,
                 mMainExecutor));
         mController = new StartingWindowController(mContext, mShellInit, mShellController,
                 mTaskOrganizer, mMainExecutor, mTypeAlgorithm, mIconProvider, mTransactionPool);

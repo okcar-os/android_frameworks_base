@@ -40,6 +40,9 @@ interface MobileConnectionRepository {
     /** The subscriptionId that this connection represents */
     val subId: Int
 
+    /** The carrierId for this connection. See [TelephonyManager.getSimCarrierId] */
+    val carrierId: StateFlow<Int>
+
     /**
      * The table log buffer created for this connection. Will have the name "MobileConnectionLog
      * [subId]"
@@ -112,8 +115,34 @@ interface MobileConnectionRepository {
      */
     val cdmaRoaming: StateFlow<Boolean>
 
-    /** The service provider name for this network connection, or the default name */
+    /** The service provider name for this network connection, or the default name. */
     val networkName: StateFlow<NetworkNameModel>
+
+    /**
+     * The service provider name for this network connection, or the default name.
+     *
+     * TODO(b/296600321): De-duplicate this field with [networkName] after determining the data
+     *   provided is identical
+     */
+    val carrierName: StateFlow<NetworkNameModel>
+
+    /**
+     * True if this type of connection is allowed while airplane mode is on, and false otherwise.
+     */
+    val isAllowedDuringAirplaneMode: StateFlow<Boolean>
+
+    /**
+     * True if this network has NET_CAPABILITIY_PRIORITIZE_LATENCY, and can be considered to be a
+     * network slice
+     */
+    val hasPrioritizedNetworkCapabilities: StateFlow<Boolean>
+
+    /**
+     * True if this connection is in emergency callback mode.
+     *
+     * @see [TelephonyManager.getEmergencyCallbackMode]
+     */
+    suspend fun isInEcmMode(): Boolean
 
     companion object {
         /** The default number of levels to use for [numberOfLevels]. */

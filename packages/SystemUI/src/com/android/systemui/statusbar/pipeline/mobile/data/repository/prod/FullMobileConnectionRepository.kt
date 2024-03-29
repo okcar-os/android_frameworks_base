@@ -22,10 +22,12 @@ import com.android.systemui.log.table.TableLogBuffer
 import com.android.systemui.log.table.TableLogBufferFactory
 import com.android.systemui.log.table.logDiffsForTable
 import com.android.systemui.statusbar.pipeline.mobile.data.model.NetworkNameModel
+import com.android.systemui.statusbar.pipeline.mobile.data.model.SubscriptionModel
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.MobileConnectionRepository
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -47,6 +49,7 @@ class FullMobileConnectionRepository(
     override val subId: Int,
     startingIsCarrierMerged: Boolean,
     override val tableLogBuffer: TableLogBuffer,
+    subscriptionModel: Flow<SubscriptionModel?>,
     private val defaultNetworkName: NetworkNameModel,
     private val networkNameSeparator: String,
     @Application scope: CoroutineScope,
@@ -80,6 +83,7 @@ class FullMobileConnectionRepository(
         mobileRepoFactory.build(
             subId,
             tableLogBuffer,
+            subscriptionModel,
             defaultNetworkName,
             networkNameSeparator,
         )
@@ -108,6 +112,11 @@ class FullMobileConnectionRepository(
             }
             .stateIn(scope, SharingStarted.WhileSubscribed(), initial)
     }
+
+    override val carrierId =
+        activeRepo
+            .flatMapLatest { it.carrierId }
+            .stateIn(scope, SharingStarted.WhileSubscribed(), activeRepo.value.carrierId.value)
 
     override val cdmaRoaming =
         activeRepo
@@ -282,6 +291,36 @@ class FullMobileConnectionRepository(
             )
             .stateIn(scope, SharingStarted.WhileSubscribed(), activeRepo.value.networkName.value)
 
+    override val carrierName =
+        activeRepo
+            .flatMapLatest { it.carrierName }
+            .logDiffsForTable(
+                tableLogBuffer,
+                columnPrefix = "",
+                initialValue = activeRepo.value.carrierName.value,
+            )
+            .stateIn(scope, SharingStarted.WhileSubscribed(), activeRepo.value.carrierName.value)
+
+    override val isAllowedDuringAirplaneMode =
+        activeRepo
+            .flatMapLatest { it.isAllowedDuringAirplaneMode }
+            .stateIn(
+                scope,
+                SharingStarted.WhileSubscribed(),
+                activeRepo.value.isAllowedDuringAirplaneMode.value,
+            )
+
+    override val hasPrioritizedNetworkCapabilities =
+        activeRepo
+            .flatMapLatest { it.hasPrioritizedNetworkCapabilities }
+            .stateIn(
+                scope,
+                SharingStarted.WhileSubscribed(),
+                activeRepo.value.hasPrioritizedNetworkCapabilities.value,
+            )
+
+    override suspend fun isInEcmMode(): Boolean = activeRepo.value.isInEcmMode()
+
     class Factory
     @Inject
     constructor(
@@ -293,6 +332,7 @@ class FullMobileConnectionRepository(
         fun build(
             subId: Int,
             startingIsCarrierMerged: Boolean,
+            subscriptionModel: Flow<SubscriptionModel?>,
             defaultNetworkName: NetworkNameModel,
             networkNameSeparator: String,
         ): FullMobileConnectionRepository {
@@ -303,6 +343,7 @@ class FullMobileConnectionRepository(
                 subId,
                 startingIsCarrierMerged,
                 mobileLogger,
+                subscriptionModel,
                 defaultNetworkName,
                 networkNameSeparator,
                 scope,
@@ -321,13 +362,14 @@ class FullMobileConnectionRepository(
     }
 
     companion object {
-        const val COL_EMERGENCY = "emergencyOnly"
-        const val COL_ROAMING = "roaming"
-        const val COL_OPERATOR = "operatorName"
-        const val COL_IS_IN_SERVICE = "isInService"
-        const val COL_IS_GSM = "isGsm"
-        const val COL_CDMA_LEVEL = "cdmaLevel"
-        const val COL_PRIMARY_LEVEL = "primaryLevel"
+        const val COL_CARRIER_ID = "carrierId"
         const val COL_CARRIER_NETWORK_CHANGE = "carrierNetworkChangeActive"
+        const val COL_CDMA_LEVEL = "cdmaLevel"
+        const val COL_EMERGENCY = "emergencyOnly"
+        const val COL_IS_GSM = "isGsm"
+        const val COL_IS_IN_SERVICE = "isInService"
+        const val COL_OPERATOR = "operatorName"
+        const val COL_PRIMARY_LEVEL = "primaryLevel"
+        const val COL_ROAMING = "roaming"
     }
 }

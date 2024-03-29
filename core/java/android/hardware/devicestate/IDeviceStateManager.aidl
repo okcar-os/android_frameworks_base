@@ -21,7 +21,14 @@ import android.hardware.devicestate.IDeviceStateManagerCallback;
 
 /** @hide */
 interface IDeviceStateManager {
-    /** Returns the current device state info. */
+    /**
+     * Returns the current device state info. This {@link DeviceStateInfo} object will always
+     * include the list of supported states. If there has been no base state or committed state
+     * provided yet to the system server, this {@link DeviceStateInfo} object will include
+     * {@link DeviceStateManager#INVALID_DEVICE_STATE} for each respectively.
+     *
+     * This method should not be used to notify callback clients.
+     */
     DeviceStateInfo getDeviceStateInfo();
 
     /**
@@ -111,6 +118,7 @@ interface IDeviceStateManager {
     *
     * This should only be called from the overlay itself.
     */
+    @EnforcePermission("CONTROL_DEVICE_STATE")
     @JavaPassthrough(annotation=
         "@android.annotation.RequiresPermission(android.Manifest.permission.CONTROL_DEVICE_STATE)")
     void onStateRequestOverlayDismissed(boolean shouldCancelRequest);

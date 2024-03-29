@@ -22,7 +22,9 @@ import android.animation.ObjectAnimator;
 import android.content.res.Resources;
 import android.view.View;
 
-import com.android.systemui.R;
+import com.android.systemui.res.R;
+
+import org.lineageos.internal.statusbar.NetworkTraffic;
 
 import org.lineageos.internal.statusbar.NetworkTraffic;
 
@@ -32,6 +34,8 @@ public final class PhoneStatusBarTransitions extends BarTransitions {
     private static final float ICON_ALPHA_WHEN_LIGHTS_OUT_NON_BATTERY_CLOCK = 0;
 
     private final float mIconAlphaWhenOpaque;
+
+    private boolean mIsHeadsUp;
 
     private View mStartSide, mStatusIcons, mBattery;
     private NetworkTraffic mNetworkTrafficStart, mNetworkTrafficCenter, mNetworkTrafficEnd;
@@ -61,15 +65,32 @@ public final class PhoneStatusBarTransitions extends BarTransitions {
         return ObjectAnimator.ofFloat(v, "alpha", v.getAlpha(), toAlpha);
     }
 
-    private float getNonBatteryClockAlphaFor(int mode) {
-        return isLightsOut(mode) ? ICON_ALPHA_WHEN_LIGHTS_OUT_NON_BATTERY_CLOCK
-                : !isOpaque(mode) ? ICON_ALPHA_WHEN_NOT_OPAQUE
-                : mIconAlphaWhenOpaque;
+    private float getStatusIconsAlphaFor(int mode) {
+        return getDefaultAlphaFor(mode);
+    }
+
+    private float getStartSideAlphaFor(int mode) {
+        // When there's a heads up notification, we need the start side icons to show regardless of
+        // lights out mode.
+        if (mIsHeadsUp) {
+            return getIconAlphaBasedOnOpacity(mode);
+        }
+        return getDefaultAlphaFor(mode);
     }
 
     private float getBatteryClockAlpha(int mode) {
         return isLightsOut(mode) ? ICON_ALPHA_WHEN_LIGHTS_OUT_BATTERY_CLOCK
-                : getNonBatteryClockAlphaFor(mode);
+                : getIconAlphaBasedOnOpacity(mode);
+    }
+
+    private float getDefaultAlphaFor(int mode) {
+        return isLightsOut(mode) ? ICON_ALPHA_WHEN_LIGHTS_OUT_NON_BATTERY_CLOCK
+                : getIconAlphaBasedOnOpacity(mode);
+    }
+
+    private float getIconAlphaBasedOnOpacity(int mode) {
+        return !isOpaque(mode) ? ICON_ALPHA_WHEN_NOT_OPAQUE
+                : mIconAlphaWhenOpaque;
     }
 
     private boolean isOpaque(int mode) {
@@ -83,22 +104,31 @@ public final class PhoneStatusBarTransitions extends BarTransitions {
         applyMode(newMode, animate);
     }
 
+    /** Informs this controller that the heads up notification state has changed. */
+    public void onHeadsUpStateChanged(boolean isHeadsUp) {
+        mIsHeadsUp = isHeadsUp;
+        // We want the icon to be fully visible when the HUN appears, so just immediately change the
+        // icon visibility and don't animate.
+        applyMode(getMode(), /* animate= */ false);
+    }
+
     private void applyMode(int mode, boolean animate) {
         if (mStartSide == null) return; // pre-init
-        float newAlpha = getNonBatteryClockAlphaFor(mode);
-        float newAlphaBC = getBatteryClockAlpha(mode);
+        float newStartSideAlpha = getStartSideAlphaFor(mode);
+        float newStatusIconsAlpha = getStatusIconsAlphaFor(mode);
+        float newBatteryAlpha = getBatteryClockAlpha(mode);
         if (mCurrentAnimation != null) {
             mCurrentAnimation.cancel();
         }
         if (animate) {
             AnimatorSet anims = new AnimatorSet();
             anims.playTogether(
-                    animateTransitionTo(mStartSide, newAlpha),
-                    animateTransitionTo(mStatusIcons, newAlpha),
-                    animateTransitionTo(mNetworkTrafficStart, newAlpha),
-                    animateTransitionTo(mNetworkTrafficCenter, newAlpha),
-                    animateTransitionTo(mNetworkTrafficEnd, newAlpha),
-                    animateTransitionTo(mBattery, newAlphaBC)
+                    animateTransitionTo(mStartSide, newStartSideAlpha),
+                    animateTransitionTo(mStatusIcons, newStatusIconsAlpha),
+                    animateTransitionTo(mNetworkTrafficStart, newStatusIconsAlpha),
+                    animateTransitionTo(mNetworkTrafficCenter, newStatusIconsAlpha),
+                    animateTransitionTo(mNetworkTrafficEnd, newStatusIconsAlpha),
+                    animateTransitionTo(mBattery, newBatteryAlpha)
                     );
             if (isLightsOut(mode)) {
                 anims.setDuration(LIGHTS_OUT_DURATION);
@@ -106,12 +136,12 @@ public final class PhoneStatusBarTransitions extends BarTransitions {
             anims.start();
             mCurrentAnimation = anims;
         } else {
-            mStartSide.setAlpha(newAlpha);
-            mStatusIcons.setAlpha(newAlpha);
-            mNetworkTrafficStart.setAlpha(newAlpha);
-            mNetworkTrafficCenter.setAlpha(newAlpha);
-            mNetworkTrafficEnd.setAlpha(newAlpha);
-            mBattery.setAlpha(newAlphaBC);
+            mStartSide.setAlpha(newStartSideAlpha);
+            mStatusIcons.setAlpha(newStatusIconsAlpha);
+            mNetworkTrafficStart.setAlpha(newStatusIconsAlpha);
+            mNetworkTrafficCenter.setAlpha(newStatusIconsAlpha);
+            mNetworkTrafficEnd.setAlpha(newStatusIconsAlpha);
+            mBattery.setAlpha(newBatteryAlpha);
         }
     }
 }

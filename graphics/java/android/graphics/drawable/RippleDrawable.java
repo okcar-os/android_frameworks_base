@@ -16,6 +16,8 @@
 
 package android.graphics.drawable;
 
+import android.annotation.TestApi;
+
 import static java.lang.annotation.ElementType.FIELD;
 import static java.lang.annotation.ElementType.LOCAL_VARIABLE;
 import static java.lang.annotation.ElementType.METHOD;
@@ -360,7 +362,9 @@ public class RippleDrawable extends LayerDrawable {
         }
     }
 
-    private void setBackgroundActive(boolean hovered, boolean focused, boolean pressed,
+    /** @hide */
+    @TestApi
+    public void setBackgroundActive(boolean hovered, boolean focused, boolean pressed,
             boolean windowFocused) {
         if (mState.mRippleStyle == STYLE_SOLID) {
             if (mBackground == null && (hovered || focused)) {
@@ -761,7 +765,7 @@ public class RippleDrawable extends LayerDrawable {
         if (mBackground != null) {
             mBackground.onHotspotBoundsChanged();
         }
-        float newRadius = Math.round(getComputedRadius());
+        float newRadius = getComputedRadius();
         for (int i = 0; i < mRunningAnimations.size(); i++) {
             RippleAnimationSession s = mRunningAnimations.get(i);
             s.setRadius(newRadius);
@@ -841,6 +845,12 @@ public class RippleDrawable extends LayerDrawable {
     private void exitPatternedAnimation() {
         mExitingAnimation = true;
         invalidateSelf(false);
+    }
+
+    /** @hide */
+    @TestApi
+    public float getTargetBackgroundOpacity() {
+        return mTargetBackgroundOpacity;
     }
 
     private void enterPatternedBackgroundAnimation(boolean focused, boolean hovered,
@@ -1003,7 +1013,8 @@ public class RippleDrawable extends LayerDrawable {
         }
         p.setShader(shader);
         p.setColorFilter(null);
-        p.setColor(color);
+        // Alpha is handled by the shader (and color is a no-op because there's a shader)
+        p.setColor(0xFF000000);
         return properties;
     }
 

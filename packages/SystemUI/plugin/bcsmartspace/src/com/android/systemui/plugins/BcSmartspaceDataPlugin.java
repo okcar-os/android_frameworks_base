@@ -44,6 +44,7 @@ public interface BcSmartspaceDataPlugin extends Plugin {
     String UI_SURFACE_HOME_SCREEN = "home";
     String UI_SURFACE_MEDIA = "media_data_manager";
     String UI_SURFACE_DREAM = "dream";
+    String UI_SURFACE_GLANCEABLE_HUB = "glanceable_hub";
 
     String ACTION = "com.android.systemui.action.PLUGIN_BC_SMARTSPACE_DATA";
     int VERSION = 1;
@@ -128,6 +129,16 @@ public interface BcSmartspaceDataPlugin extends Plugin {
         void setDozeAmount(float amount);
 
         /**
+         * Set if dozing is true or false
+         */
+        default void setDozing(boolean dozing) {}
+
+        /**
+         * Set if split shade enabled
+         */
+        default void setSplitShadeEnabled(boolean enabled) {}
+
+        /**
          * Set the current keyguard bypass enabled status.
          */
         default void setKeyguardBypassEnabled(boolean enabled) {}
@@ -187,7 +198,7 @@ public interface BcSmartspaceDataPlugin extends Plugin {
                 if (action.getIntent() != null) {
                     startIntent(v, action.getIntent(), showOnLockscreen);
                 } else if (action.getPendingIntent() != null) {
-                    startPendingIntent(action.getPendingIntent(), showOnLockscreen);
+                    startPendingIntent(v, action.getPendingIntent(), showOnLockscreen);
                 }
             } catch (ActivityNotFoundException e) {
                 Log.w(TAG, "Could not launch intent for action: " + action, e);
@@ -199,7 +210,7 @@ public interface BcSmartspaceDataPlugin extends Plugin {
                 if (action.getIntent() != null) {
                     startIntent(v, action.getIntent(), showOnLockscreen);
                 } else if (action.getPendingIntent() != null) {
-                    startPendingIntent(action.getPendingIntent(), showOnLockscreen);
+                    startPendingIntent(v, action.getPendingIntent(), showOnLockscreen);
                 }
             } catch (ActivityNotFoundException e) {
                 Log.w(TAG, "Could not launch intent for action: " + action, e);
@@ -210,6 +221,6 @@ public interface BcSmartspaceDataPlugin extends Plugin {
         void startIntent(View v, Intent i, boolean showOnLockscreen);
 
         /** Start the PendingIntent */
-        void startPendingIntent(PendingIntent pi, boolean showOnLockscreen);
+        void startPendingIntent(View v, PendingIntent pi, boolean showOnLockscreen);
     }
 }

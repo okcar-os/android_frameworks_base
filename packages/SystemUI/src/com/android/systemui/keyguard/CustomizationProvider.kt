@@ -20,6 +20,7 @@ package com.android.systemui.keyguard
 import android.content.ContentProvider
 import android.content.ContentValues
 import android.content.Context
+import android.content.Intent
 import android.content.UriMatcher
 import android.content.pm.PackageManager
 import android.content.pm.ProviderInfo
@@ -29,6 +30,7 @@ import android.net.Uri
 import android.os.Binder
 import android.os.Bundle
 import android.util.Log
+import com.android.app.tracing.TraceUtils.Companion.runBlocking
 import com.android.systemui.SystemUIAppComponentFactoryBase
 import com.android.systemui.SystemUIAppComponentFactoryBase.ContextAvailableCallback
 import com.android.systemui.dagger.qualifiers.Main
@@ -37,7 +39,6 @@ import com.android.systemui.keyguard.ui.preview.KeyguardRemotePreviewManager
 import com.android.systemui.shared.customization.data.content.CustomizationProviderContract as Contract
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.runBlocking
 
 class CustomizationProvider :
     ContentProvider(), SystemUIAppComponentFactoryBase.ContextInitializer {
@@ -131,7 +132,7 @@ class CustomizationProvider :
             throw UnsupportedOperationException()
         }
 
-        return runBlocking(mainDispatcher) { insertSelection(values) }
+        return runBlocking("$TAG#insert", mainDispatcher) { insertSelection(values) }
     }
 
     override fun query(
@@ -141,7 +142,7 @@ class CustomizationProvider :
         selectionArgs: Array<out String>?,
         sortOrder: String?,
     ): Cursor? {
-        return runBlocking(mainDispatcher) {
+        return runBlocking("$TAG#query", mainDispatcher) {
             when (uriMatcher.match(uri)) {
                 MATCH_CODE_ALL_AFFORDANCES -> queryAffordances()
                 MATCH_CODE_ALL_SLOTS -> querySlots()
@@ -171,7 +172,7 @@ class CustomizationProvider :
             throw UnsupportedOperationException()
         }
 
-        return runBlocking(mainDispatcher) { deleteSelection(uri, selectionArgs) }
+        return runBlocking("$TAG#delete", mainDispatcher) { deleteSelection(uri, selectionArgs) }
     }
 
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
@@ -282,11 +283,11 @@ class CustomizationProvider :
                     Contract.LockScreenQuickAffordances.AffordanceTable.Columns.ICON,
                     Contract.LockScreenQuickAffordances.AffordanceTable.Columns.IS_ENABLED,
                     Contract.LockScreenQuickAffordances.AffordanceTable.Columns
-                        .ENABLEMENT_INSTRUCTIONS,
+                        .ENABLEMENT_EXPLANATION,
                     Contract.LockScreenQuickAffordances.AffordanceTable.Columns
                         .ENABLEMENT_ACTION_TEXT,
                     Contract.LockScreenQuickAffordances.AffordanceTable.Columns
-                        .ENABLEMENT_COMPONENT_NAME,
+                        .ENABLEMENT_ACTION_INTENT,
                     Contract.LockScreenQuickAffordances.AffordanceTable.Columns.CONFIGURE_INTENT,
                 )
             )
@@ -298,13 +299,10 @@ class CustomizationProvider :
                             representation.name,
                             representation.iconResourceId,
                             if (representation.isEnabled) 1 else 0,
-                            representation.instructions?.joinToString(
-                                Contract.LockScreenQuickAffordances.AffordanceTable
-                                    .ENABLEMENT_INSTRUCTIONS_DELIMITER
-                            ),
+                            representation.explanation,
                             representation.actionText,
-                            representation.actionComponentName,
-                            representation.configureIntent?.toUri(0),
+                            representation.actionIntent?.toUri(Intent.URI_INTENT_SCHEME),
+                            representation.configureIntent?.toUri(Intent.URI_INTENT_SCHEME),
                         )
                     )
                 }

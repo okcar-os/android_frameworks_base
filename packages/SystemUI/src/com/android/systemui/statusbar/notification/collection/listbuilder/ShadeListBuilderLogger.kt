@@ -17,10 +17,10 @@
 package com.android.systemui.statusbar.notification.collection.listbuilder
 
 import com.android.systemui.log.dagger.NotificationLog
-import com.android.systemui.plugins.log.LogBuffer
-import com.android.systemui.plugins.log.LogLevel.DEBUG
-import com.android.systemui.plugins.log.LogLevel.INFO
-import com.android.systemui.plugins.log.LogLevel.WARNING
+import com.android.systemui.log.LogBuffer
+import com.android.systemui.log.core.LogLevel.DEBUG
+import com.android.systemui.log.core.LogLevel.INFO
+import com.android.systemui.log.core.LogLevel.WARNING
 import com.android.systemui.statusbar.notification.NotifPipelineFlags
 import com.android.systemui.statusbar.notification.collection.GroupEntry
 import com.android.systemui.statusbar.notification.collection.ListEntry

@@ -17,7 +17,6 @@ package com.android.wm.shell.bubbles;
 
 import static com.android.internal.annotations.VisibleForTesting.Visibility.PACKAGE;
 import static com.android.internal.annotations.VisibleForTesting.Visibility.PRIVATE;
-import static com.android.wm.shell.bubbles.Bubble.KEY_APP_BUBBLE;
 import static com.android.wm.shell.bubbles.BubbleDebugConfig.DEBUG_BUBBLE_DATA;
 import static com.android.wm.shell.bubbles.BubbleDebugConfig.TAG_BUBBLES;
 import static com.android.wm.shell.bubbles.BubbleDebugConfig.TAG_WITH_CLASS_NAME;
@@ -38,8 +37,11 @@ import androidx.annotation.Nullable;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.util.FrameworkStatsLog;
+import com.android.launcher3.icons.BubbleIconFactory;
 import com.android.wm.shell.R;
 import com.android.wm.shell.bubbles.Bubbles.DismissReason;
+import com.android.wm.shell.common.bubbles.BubbleBarUpdate;
+import com.android.wm.shell.common.bubbles.RemovedBubble;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;
@@ -75,6 +77,7 @@ public class BubbleData {
         boolean orderChanged;
         boolean suppressedSummaryChanged;
         boolean expanded;
+        boolean shouldShowEducation;
         @Nullable BubbleViewProvider selectedBubble;
         @Nullable Bubble addedBubble;
         @Nullable Bubble updatedBubble;
@@ -113,6 +116,63 @@ public class BubbleData {
         void bubbleRemoved(Bubble bubbleToRemove, @DismissReason int reason) {
             removedBubbles.add(new Pair<>(bubbleToRemove, reason));
         }
+
+        /**
+         * Converts the update to a {@link BubbleBarUpdate} which contains updates relevant
+         * to the bubble bar. Only used when {@link BubbleController#isShowingAsBubbleBar()} is
+         * true.
+         */
+        BubbleBarUpdate toBubbleBarUpdate() {
+            BubbleBarUpdate bubbleBarUpdate = new BubbleBarUpdate();
+
+            bubbleBarUpdate.expandedChanged = expandedChanged;
+            bubbleBarUpdate.expanded = expanded;
+            bubbleBarUpdate.shouldShowEducation = shouldShowEducation;
+            if (selectionChanged) {
+                bubbleBarUpdate.selectedBubbleKey = selectedBubble != null
+                        ? selectedBubble.getKey()
+                        : null;
+            }
+            bubbleBarUpdate.addedBubble = addedBubble != null
+                    ? addedBubble.asBubbleBarBubble()
+                    : null;
+            // TODO(b/269670235): We need to handle updates better, I think for the bubble bar only
+            //  certain updates need to be sent instead of any updatedBubble.
+            bubbleBarUpdate.updatedBubble = updatedBubble != null
+                    ? updatedBubble.asBubbleBarBubble()
+                    : null;
+            bubbleBarUpdate.suppressedBubbleKey = suppressedBubble != null
+                    ? suppressedBubble.getKey()
+                    : null;
+            bubbleBarUpdate.unsupressedBubbleKey = unsuppressedBubble != null
+                    ? unsuppressedBubble.getKey()
+                    : null;
+            for (int i = 0; i < removedBubbles.size(); i++) {
+                Pair<Bubble, Integer> pair = removedBubbles.get(i);
+                bubbleBarUpdate.removedBubbles.add(
+                        new RemovedBubble(pair.first.getKey(), pair.second));
+            }
+            if (orderChanged) {
+                // Include the new order
+                for (int i = 0; i < bubbles.size(); i++) {
+                    bubbleBarUpdate.bubbleKeysInOrder.add(bubbles.get(i).getKey());
+                }
+            }
+            return bubbleBarUpdate;
+        }
+
+        /**
+         * Gets the current state of active bubbles and populates the update with that.  Only
+         * used when {@link BubbleController#isShowingAsBubbleBar()} is true.
+         */
+        BubbleBarUpdate getInitialState() {
+            BubbleBarUpdate bubbleBarUpdate = new BubbleBarUpdate();
+            bubbleBarUpdate.shouldShowEducation = shouldShowEducation;
+            for (int i = 0; i < bubbles.size(); i++) {
+                bubbleBarUpdate.currentBubbleList.add(bubbles.get(i).asBubbleBarBubble());
+            }
+            return bubbleBarUpdate;
+        }
     }
 
     /**
@@ -130,6 +190,7 @@ public class BubbleData {
 
     private final Context mContext;
     private final BubblePositioner mPositioner;
+    private final BubbleEducationController mEducationController;
     private final Executor mMainExecutor;
     /** Bubbles that are actively in the stack. */
     private final List<Bubble> mBubbles;
@@ -176,10 +237,11 @@ public class BubbleData {
     private HashMap<String, String> mSuppressedGroupKeys = new HashMap<>();
 
     public BubbleData(Context context, BubbleLogger bubbleLogger, BubblePositioner positioner,
-            Executor mainExecutor) {
+            BubbleEducationController educationController, Executor mainExecutor) {
         mContext = context;
         mLogger = bubbleLogger;
         mPositioner = positioner;
+        mEducationController = educationController;
         mMainExecutor = mainExecutor;
         mOverflow = new BubbleOverflow(context, positioner);
         mBubbles = new ArrayList<>();
@@ -188,6 +250,13 @@ public class BubbleData {
         mStateChange = new Update(mBubbles, mOverflowBubbles);
         mMaxBubbles = mPositioner.getMaxBubbles();
         mMaxOverflowBubbles = mContext.getResources().getInteger(R.integer.bubbles_max_overflow);
+    }
+
+    /**
+     * Returns a bubble bar update populated with the current list of active bubbles.
+     */
+    public BubbleBarUpdate getInitialStateForBubbleBar() {
+        return mStateChange.getInitialState();
     }
 
     public void setSuppressionChangedListener(Bubbles.BubbleMetadataFlagListener listener) {
@@ -268,6 +337,35 @@ public class BubbleData {
         }
         setExpandedInternal(expanded);
         dispatchPendingChanges();
+    }
+
+    /**
+     * Sets the selected bubble and expands it, but doesn't dispatch changes
+     * to {@link BubbleData.Listener}. This is used for updates coming from launcher whose views
+     * will already be updated so we don't need to notify them again, but BubbleData should be
+     * updated to have the correct state.
+     */
+    public void setSelectedBubbleFromLauncher(BubbleViewProvider bubble) {
+        if (DEBUG_BUBBLE_DATA) {
+            Log.d(TAG, "setSelectedBubbleFromLauncher: " + bubble);
+        }
+        mExpanded = true;
+        if (Objects.equals(bubble, mSelectedBubble)) {
+            return;
+        }
+        boolean isOverflow = bubble != null && BubbleOverflow.KEY.equals(bubble.getKey());
+        if (bubble != null
+                && !mBubbles.contains(bubble)
+                && !mOverflowBubbles.contains(bubble)
+                && !isOverflow) {
+            Log.e(TAG, "Cannot select bubble which doesn't exist!"
+                    + " (" + bubble + ") bubbles=" + mBubbles);
+            return;
+        }
+        if (bubble != null && !isOverflow) {
+            ((Bubble) bubble).markAsAccessedAt(mTimeSource.currentTimeMillis());
+        }
+        mSelectedBubble = bubble;
     }
 
     public void setSelectedBubble(BubbleViewProvider bubble) {
@@ -354,6 +452,7 @@ public class BubbleData {
         if (bubble.shouldAutoExpand()) {
             bubble.setShouldAutoExpand(false);
             setSelectedBubbleInternal(bubble);
+
             if (!mExpanded) {
                 setExpandedInternal(true);
             }
@@ -685,8 +784,7 @@ public class BubbleData {
         if (bubble.getPendingIntentCanceled()
                 || !(reason == Bubbles.DISMISS_AGED
                 || reason == Bubbles.DISMISS_USER_GESTURE
-                || reason == Bubbles.DISMISS_RELOAD_FROM_DISK)
-                || KEY_APP_BUBBLE.equals(bubble.getKey())) {
+                || reason == Bubbles.DISMISS_RELOAD_FROM_DISK)) {
             return;
         }
         if (DEBUG_BUBBLE_DATA) {
@@ -784,6 +882,9 @@ public class BubbleData {
 
     private void dispatchPendingChanges() {
         if (mListener != null && mStateChange.anythingChanged()) {
+            mStateChange.shouldShowEducation = mSelectedBubble != null
+                    && mEducationController.shouldShowStackEducation(mSelectedBubble)
+                    && !mExpanded;
             mListener.applyUpdate(mStateChange);
         }
         mStateChange = new Update(mBubbles, mOverflowBubbles);
@@ -1138,29 +1239,30 @@ public class BubbleData {
      * Description of current bubble data state.
      */
     public void dump(PrintWriter pw) {
-        pw.print("selected: ");
+        pw.println("BubbleData state:");
+        pw.print("  selected: ");
         pw.println(mSelectedBubble != null
                 ? mSelectedBubble.getKey()
                 : "null");
-        pw.print("expanded: ");
+        pw.print("  expanded: ");
         pw.println(mExpanded);
 
-        pw.print("stack bubble count:    ");
+        pw.print("Stack bubble count: ");
         pw.println(mBubbles.size());
         for (Bubble bubble : mBubbles) {
             bubble.dump(pw);
         }
 
-        pw.print("overflow bubble count:    ");
+        pw.print("Overflow bubble count: ");
         pw.println(mOverflowBubbles.size());
         for (Bubble bubble : mOverflowBubbles) {
             bubble.dump(pw);
         }
 
-        pw.print("summaryKeys: ");
+        pw.print("SummaryKeys: ");
         pw.println(mSuppressedGroupKeys.size());
         for (String key : mSuppressedGroupKeys.keySet()) {
-            pw.println("   suppressing: " + key);
+            pw.println("     suppressing: " + key);
         }
     }
 }

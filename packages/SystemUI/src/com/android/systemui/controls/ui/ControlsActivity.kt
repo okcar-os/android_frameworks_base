@@ -31,12 +31,11 @@ import android.view.WindowInsets
 import android.view.WindowInsets.Type
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
-import com.android.systemui.R
+import com.android.systemui.res.R
 import com.android.systemui.broadcast.BroadcastDispatcher
 import com.android.systemui.controls.management.ControlsAnimations
 import com.android.systemui.controls.settings.ControlsSettingsDialogManager
 import com.android.systemui.flags.FeatureFlags
-import com.android.systemui.flags.Flags
 import com.android.systemui.statusbar.policy.KeyguardStateController
 import javax.inject.Inject
 
@@ -57,26 +56,25 @@ open class ControlsActivity @Inject constructor(
     private val keyguardStateController: KeyguardStateController
 ) : ComponentActivity() {
 
+    private val lastConfiguration = Configuration()
+
     private lateinit var parent: ViewGroup
     private lateinit var broadcastReceiver: BroadcastReceiver
     private var mExitToDream: Boolean = false
-    private lateinit var lastConfiguration: Configuration
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        lastConfiguration = resources.configuration
-        if (featureFlags.isEnabled(Flags.USE_APP_PANELS)) {
-            window.addPrivateFlags(WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY)
-        }
+        lastConfiguration.setTo(resources.configuration)
+        window.addPrivateFlags(WindowManager.LayoutParams.PRIVATE_FLAG_TRUSTED_OVERLAY)
 
         setContentView(R.layout.controls_fullscreen)
 
-        getLifecycle().addObserver(
+        lifecycle.addObserver(
             ControlsAnimations.observerForAnimations(
                 requireViewById(R.id.control_detail_root),
                 window,
                 intent,
-                !featureFlags.isEnabled(Flags.USE_APP_PANELS)
+                false
             )
         )
 
@@ -105,7 +103,7 @@ open class ControlsActivity @Inject constructor(
         if (lastConfiguration.diff(newConfig) and interestingFlags != 0 ) {
             uiController.onSizeChange()
         }
-        lastConfiguration = newConfig
+        lastConfiguration.setTo(newConfig)
     }
 
     override fun onStart() {
@@ -113,7 +111,7 @@ open class ControlsActivity @Inject constructor(
 
         parent = requireViewById(R.id.control_detail_root)
         parent.alpha = 0f
-        if (featureFlags.isEnabled(Flags.USE_APP_PANELS) && !keyguardStateController.isUnlocked) {
+        if (!keyguardStateController.isUnlocked) {
             controlsSettingsDialogManager.maybeShowDialog(this) {
                 uiController.show(parent, { finishOrReturnToDream() }, this)
             }
@@ -158,6 +156,10 @@ open class ControlsActivity @Inject constructor(
     override fun onDestroy() {
         super.onDestroy()
 
+        unregisterReceiver()
+    }
+
+    protected open fun unregisterReceiver() {
         broadcastDispatcher.unregisterReceiver(broadcastReceiver)
     }
 

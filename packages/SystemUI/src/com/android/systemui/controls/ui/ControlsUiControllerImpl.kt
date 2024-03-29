@@ -32,8 +32,10 @@ import android.graphics.drawable.LayerDrawable
 import android.os.Trace
 import android.service.controls.Control
 import android.service.controls.ControlsProviderService
+import android.service.controls.flags.Flags.homePanelDream
 import android.util.Log
 import android.view.ContextThemeWrapper
+import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -50,7 +52,7 @@ import android.widget.Space
 import android.widget.TextView
 import androidx.annotation.VisibleForTesting
 import com.android.systemui.Dumpable
-import com.android.systemui.R
+import com.android.systemui.res.R
 import com.android.systemui.controls.ControlsMetricsLogger
 import com.android.systemui.controls.ControlsServiceInfo
 import com.android.systemui.controls.CustomIconCache
@@ -71,15 +73,13 @@ import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.dump.DumpManager
 import com.android.systemui.flags.FeatureFlags
-import com.android.systemui.flags.Flags
-import com.android.systemui.globalactions.GlobalActionsPopupMenu
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.settings.UserTracker
 import com.android.systemui.statusbar.policy.KeyguardStateController
 import com.android.systemui.util.asIndenting
 import com.android.systemui.util.concurrency.DelayableExecutor
-import com.android.systemui.util.indentIfPossible
-import com.android.wm.shell.TaskViewFactory
+import com.android.systemui.util.withIncreasedIndent
+import com.android.wm.shell.taskview.TaskViewFactory
 import dagger.Lazy
 import java.io.PrintWriter
 import java.text.Collator
@@ -167,7 +167,7 @@ class ControlsUiControllerImpl @Inject constructor (
         get() = !hidden
 
     init {
-        dumpManager.registerDumpable(javaClass.name, this)
+        dumpManager.registerDumpable(this)
     }
 
     private fun createCallback(
@@ -279,7 +279,7 @@ class ControlsUiControllerImpl @Inject constructor (
 
         controlsListingController.get().removeCallback(listingCallback)
         controlsController.get().unsubscribe()
-        taskViewController?.dismiss()
+        taskViewController?.removeTask()
         taskViewController = null
 
         val fadeAnim = ObjectAnimator.ofFloat(parent, "alpha", 1.0f, 0.0f)
@@ -328,9 +328,16 @@ class ControlsUiControllerImpl @Inject constructor (
 
     @VisibleForTesting
     internal fun startRemovingApp(componentName: ComponentName, appName: CharSequence) {
+        activityStarter.dismissKeyguardThenExecute({
+            showAppRemovalDialog(componentName, appName)
+            true
+        }, null, true)
+    }
+
+    private fun showAppRemovalDialog(componentName: ComponentName, appName: CharSequence) {
         removeAppDialog?.cancel()
-        removeAppDialog = dialogsFactory.createRemoveAppDialog(context, appName) {
-            if (!controlsController.get().removeFavorites(componentName)) {
+        removeAppDialog = dialogsFactory.createRemoveAppDialog(context, appName) { shouldRemove ->
+            if (!shouldRemove || !controlsController.get().removeFavorites(componentName)) {
                 return@createRemoveAppDialog
             }
 
@@ -465,12 +472,17 @@ class ControlsUiControllerImpl @Inject constructor (
         val pendingIntent = PendingIntent.getActivityAsUser(
                 context,
                 0,
-                Intent()
-                        .setComponent(componentName)
-                        .putExtra(
-                                ControlsProviderService.EXTRA_LOCKSCREEN_ALLOW_TRIVIAL_CONTROLS,
-                                setting
-                        ),
+                Intent().apply {
+                    component = componentName
+                    putExtra(
+                        ControlsProviderService.EXTRA_LOCKSCREEN_ALLOW_TRIVIAL_CONTROLS,
+                        setting
+                    )
+                    if (homePanelDream()) {
+                        putExtra(ControlsProviderService.EXTRA_CONTROLS_SURFACE,
+                            ControlsProviderService.CONTROLS_SURFACE_ACTIVITY_PANEL)
+                    }
+                },
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
                 null,
                 userTracker.userHandle
@@ -499,32 +511,22 @@ class ControlsUiControllerImpl @Inject constructor (
         val isPanel = selectedItem is SelectedItem.PanelItem
         val selectedStructure = (selectedItem as? SelectedItem.StructureItem)?.structure
                 ?: EMPTY_STRUCTURE
-        val newFlows = featureFlags.isEnabled(Flags.CONTROLS_MANAGEMENT_NEW_FLOWS)
 
         val items = buildList {
             add(OverflowMenuAdapter.MenuItem(
                     context.getText(R.string.controls_open_app),
                     OPEN_APP_ID
             ))
-            if (newFlows || isPanel) {
-                if (extraApps) {
-                    add(OverflowMenuAdapter.MenuItem(
-                            context.getText(R.string.controls_menu_add_another_app),
-                            ADD_APP_ID
-                    ))
-                }
-                if (featureFlags.isEnabled(Flags.APP_PANELS_REMOVE_APPS_ALLOWED)) {
-                    add(OverflowMenuAdapter.MenuItem(
-                            context.getText(R.string.controls_menu_remove),
-                            REMOVE_APP_ID,
-                    ))
-                }
-            } else {
+            if (extraApps) {
                 add(OverflowMenuAdapter.MenuItem(
-                        context.getText(R.string.controls_menu_add),
-                        ADD_CONTROLS_ID
+                        context.getText(R.string.controls_menu_add_another_app),
+                        ADD_APP_ID
                 ))
             }
+            add(OverflowMenuAdapter.MenuItem(
+                    context.getText(R.string.controls_menu_remove),
+                    REMOVE_APP_ID,
+            ))
             if (!isPanel) {
                 add(OverflowMenuAdapter.MenuItem(
                         context.getText(R.string.controls_menu_edit),
@@ -540,12 +542,12 @@ class ControlsUiControllerImpl @Inject constructor (
         val anchor = parent.requireViewById<ImageView>(R.id.controls_more)
         anchor.setOnClickListener(object : View.OnClickListener {
             override fun onClick(v: View) {
-                popup = GlobalActionsPopupMenu(
-                        popupThemedContext,
-                        false /* isDropDownMode */
-                ).apply {
-                    setAnchorView(anchor)
+                popup = ControlsPopupMenu(popupThemedContext).apply {
+                    width = ViewGroup.LayoutParams.WRAP_CONTENT
+                    anchorView = anchor
+                    setDropDownGravity(Gravity.END)
                     setAdapter(adapter)
+
                     setOnItemClickListener(object : AdapterView.OnItemClickListener {
                         override fun onItemClick(
                             parent: AdapterView<*>,
@@ -604,7 +606,7 @@ class ControlsUiControllerImpl @Inject constructor (
             setCompoundDrawablesRelative(selected.icon, null, null, null)
         }
 
-        val anchor = parent.requireViewById<ViewGroup>(R.id.controls_header)
+        val anchor = parent.requireViewById<View>(R.id.app_or_structure_spinner)
         if (items.size == 1) {
             spinner.setBackground(null)
             anchor.setOnClickListener(null)
@@ -617,11 +619,9 @@ class ControlsUiControllerImpl @Inject constructor (
 
         anchor.setOnClickListener(object : View.OnClickListener {
             override fun onClick(v: View) {
-                popup = GlobalActionsPopupMenu(
-                        popupThemedContext,
-                        true /* isDropDownMode */
-                ).apply {
-                    setAnchorView(anchor)
+                popup = ControlsPopupMenu(popupThemedContext).apply {
+                    anchorView = anchor
+                    width = ViewGroup.LayoutParams.MATCH_PARENT
                     setAdapter(adapter)
 
                     setOnItemClickListener(object : AdapterView.OnItemClickListener {
@@ -660,7 +660,7 @@ class ControlsUiControllerImpl @Inject constructor (
 
         val maxColumns = ControlAdapter.findMaxColumns(activityContext.resources)
 
-        val listView = parent.requireViewById(R.id.global_actions_controls_list) as ViewGroup
+        val listView = parent.requireViewById(R.id.controls_list) as ViewGroup
         listView.removeAllViews()
         var lastRow: ViewGroup = createRow(inflater, listView)
         selectedStructure.controls.forEach {
@@ -773,7 +773,7 @@ class ControlsUiControllerImpl @Inject constructor (
 
             closeDialogs(true)
             controlsController.get().unsubscribe()
-            taskViewController?.dismiss()
+            taskViewController?.removeTask()
             taskViewController = null
 
             controlsById.clear()
@@ -828,9 +828,9 @@ class ControlsUiControllerImpl @Inject constructor (
     private fun findSelectionItem(si: SelectedItem, items: List<SelectionItem>): SelectionItem? =
         items.firstOrNull { it.matches(si) }
 
-    override fun dump(pw: PrintWriter, args: Array<out String>) {
-        pw.println("ControlsUiControllerImpl:")
-        pw.asIndenting().indentIfPossible {
+    override fun dump(pw: PrintWriter, args: Array<out String>) = pw.asIndenting().run {
+        println("ControlsUiControllerImpl:")
+        withIncreasedIndent {
             println("hidden: $hidden")
             println("selectedItem: $selectedItem")
             println("lastSelections: $lastSelections")
@@ -869,22 +869,24 @@ internal data class SelectionItem(
     }
 }
 
-private class ItemAdapter(
-    val parentContext: Context,
-    val resource: Int
-) : ArrayAdapter<SelectionItem>(parentContext, resource) {
+private class ItemAdapter(parentContext: Context, val resource: Int) :
+        ArrayAdapter<SelectionItem>(parentContext, resource) {
 
-    val layoutInflater = LayoutInflater.from(context)
+    private val layoutInflater = LayoutInflater.from(context)!!
 
     override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-        val item = getItem(position)
+        val item: SelectionItem = getItem(position)!!
         val view = convertView ?: layoutInflater.inflate(resource, parent, false)
-        view.requireViewById<TextView>(R.id.controls_spinner_item).apply {
-            setText(item.getTitle())
-        }
-        view.requireViewById<ImageView>(R.id.app_icon).apply {
-            setImageDrawable(item.icon)
+        with(view.tag as? ViewHolder ?: ViewHolder(view).also { view.tag = it }) {
+            titleView.text = item.getTitle()
+            iconView.setImageDrawable(item.icon)
         }
         return view
+    }
+
+    private class ViewHolder(itemView: View) {
+
+        val titleView: TextView = itemView.requireViewById(R.id.controls_spinner_item)
+        val iconView: ImageView = itemView.requireViewById(R.id.app_icon)
     }
 }

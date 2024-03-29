@@ -18,13 +18,13 @@ package com.android.systemui.statusbar.pipeline.mobile.data.repository.demo
 
 import android.content.Context
 import android.telephony.SubscriptionManager.INVALID_SUBSCRIPTION_ID
+import android.telephony.SubscriptionManager.PROFILE_CLASS_UNSET
 import android.util.Log
 import com.android.settingslib.SignalIcon
 import com.android.settingslib.mobile.MobileMappings
 import com.android.settingslib.mobile.TelephonyIcons
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.log.table.TableLogBufferFactory
-import com.android.systemui.statusbar.pipeline.mobile.data.model.MobileConnectivityModel
 import com.android.systemui.statusbar.pipeline.mobile.data.model.ResolvedNetworkType
 import com.android.systemui.statusbar.pipeline.mobile.data.model.ResolvedNetworkType.DefaultNetworkType
 import com.android.systemui.statusbar.pipeline.mobile.data.model.SubscriptionModel
@@ -93,9 +93,13 @@ constructor(
 
     private fun maybeCreateSubscription(subId: Int) {
         if (!subscriptionInfoCache.containsKey(subId)) {
-            SubscriptionModel(subscriptionId = subId, isOpportunistic = false).also {
-                subscriptionInfoCache[subId] = it
-            }
+            SubscriptionModel(
+                    subscriptionId = subId,
+                    isOpportunistic = false,
+                    carrierName = DEFAULT_CARRIER_NAME,
+                    profileClass = PROFILE_CLASS_UNSET,
+                )
+                .also { subscriptionInfoCache[subId] = it }
 
             _subscriptions.value = subscriptionInfoCache.values.toList()
         }
@@ -132,6 +136,9 @@ constructor(
 
     override val defaultMobileIconGroup = flowOf(TelephonyIcons.THREE_G)
 
+    override val isAnySimSecure: Flow<Boolean> = flowOf(getIsAnySimSecure())
+    override fun getIsAnySimSecure(): Boolean = false
+
     override val defaultMobileIconMapping = MutableStateFlow(TelephonyIcons.ICON_NAME_TO_ICON)
 
     /**
@@ -158,8 +165,13 @@ constructor(
     override val defaultDataSubId = MutableStateFlow(INVALID_SUBSCRIPTION_ID)
 
     // TODO(b/261029387): not yet supported
-    override val defaultMobileNetworkConnectivity =
-        MutableStateFlow(MobileConnectivityModel(isConnected = true, isValidated = true))
+    override val mobileIsDefault: StateFlow<Boolean> = MutableStateFlow(true)
+
+    // TODO(b/261029387): not yet supported
+    override val hasCarrierMergedConnection = MutableStateFlow(false)
+
+    // TODO(b/261029387): not yet supported
+    override val defaultConnectionIsValidated: StateFlow<Boolean> = MutableStateFlow(true)
 
     override fun getRepoForSubId(subId: Int): DemoMobileConnectionRepository {
         val current = connectionRepoCache[subId]?.repo
@@ -210,6 +222,8 @@ constructor(
         connectionRepoCache.clear()
         subscriptionInfoCache.clear()
     }
+
+    override suspend fun isInEcmMode(): Boolean = false
 
     private fun processMobileEvent(event: FakeNetworkEventModel) {
         when (event) {
@@ -323,6 +337,7 @@ constructor(
         private const val TAG = "DemoMobileConnectionsRepo"
 
         private const val DEFAULT_SUB_ID = 1
+        private const val DEFAULT_CARRIER_NAME = "demo carrier"
     }
 }
 

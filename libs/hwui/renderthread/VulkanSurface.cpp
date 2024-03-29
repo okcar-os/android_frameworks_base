@@ -16,6 +16,7 @@
 
 #include "VulkanSurface.h"
 
+#include <include/android/SkSurfaceAndroid.h>
 #include <GrDirectContext.h>
 #include <SkSurface.h>
 #include <algorithm>
@@ -23,9 +24,6 @@
 #include <gui/TraceUtils.h>
 #include "VulkanManager.h"
 #include "utils/Color.h"
-
-#undef LOG_TAG
-#define LOG_TAG "VulkanSurface"
 
 namespace android {
 namespace uirenderer {
@@ -213,7 +211,14 @@ bool VulkanSurface::InitializeWindowInfoStruct(ANativeWindow* window, ColorMode 
 
     outWindowInfo->bufferFormat = ColorTypeToBufferFormat(colorType);
     outWindowInfo->colorspace = colorSpace;
-    outWindowInfo->dataspace = ColorSpaceToADataSpace(colorSpace.get(), colorType);
+    outWindowInfo->colorMode = colorMode;
+
+    if (colorMode == ColorMode::Hdr || colorMode == ColorMode::Hdr10) {
+        outWindowInfo->dataspace =
+                static_cast<android_dataspace>(STANDARD_DCI_P3 | TRANSFER_SRGB | RANGE_EXTENDED);
+    } else {
+        outWindowInfo->dataspace = ColorSpaceToADataSpace(colorSpace.get(), colorType);
+    }
     LOG_ALWAYS_FATAL_IF(
             outWindowInfo->dataspace == HAL_DATASPACE_UNKNOWN && colorType != kAlpha_8_SkColorType,
             "Unsupported colorspace");
@@ -458,11 +463,17 @@ VulkanSurface::NativeBufferInfo* VulkanSurface::dequeueNativeBuffer() {
     VulkanSurface::NativeBufferInfo* bufferInfo = &mNativeBuffers[idx];
 
     if (bufferInfo->skSurface.get() == nullptr) {
-        bufferInfo->skSurface = SkSurface::MakeFromAHardwareBuffer(
+        SkSurfaceProps surfaceProps;
+        if (mWindowInfo.colorMode != ColorMode::Default) {
+            surfaceProps = SkSurfaceProps(SkSurfaceProps::kAlwaysDither_Flag | surfaceProps.flags(),
+                                          surfaceProps.pixelGeometry());
+        }
+        bufferInfo->skSurface = SkSurfaces::WrapAndroidHardwareBuffer(
                 mGrContext, ANativeWindowBuffer_getHardwareBuffer(bufferInfo->buffer.get()),
-                kTopLeft_GrSurfaceOrigin, mWindowInfo.colorspace, nullptr, /*from_window=*/true);
+                kTopLeft_GrSurfaceOrigin, mWindowInfo.colorspace, &surfaceProps,
+                /*from_window=*/true);
         if (bufferInfo->skSurface.get() == nullptr) {
-            ALOGE("SkSurface::MakeFromAHardwareBuffer failed");
+            ALOGE("SkSurfaces::WrapAndroidHardwareBuffer failed");
             mNativeWindow->cancelBuffer(mNativeWindow.get(), buffer,
                                         mNativeBuffers[idx].dequeue_fence.release());
             mNativeBuffers[idx].dequeued = false;
@@ -521,6 +532,33 @@ int VulkanSurface::getCurrentBuffersAge() {
     LOG_ALWAYS_FATAL_IF(!mCurrentBufferInfo);
     VulkanSurface::NativeBufferInfo& currentBuffer = *mCurrentBufferInfo;
     return currentBuffer.hasValidContents ? (mPresentCount - currentBuffer.lastPresentedCount) : 0;
+}
+
+void VulkanSurface::setColorSpace(sk_sp<SkColorSpace> colorSpace) {
+    mWindowInfo.colorspace = std::move(colorSpace);
+    for (int i = 0; i < kNumBufferSlots; i++) {
+        mNativeBuffers[i].skSurface.reset();
+    }
+
+    if (mWindowInfo.colorMode == ColorMode::Hdr || mWindowInfo.colorMode == ColorMode::Hdr10) {
+        mWindowInfo.dataspace =
+                static_cast<android_dataspace>(STANDARD_DCI_P3 | TRANSFER_SRGB | RANGE_EXTENDED);
+    } else {
+        mWindowInfo.dataspace = ColorSpaceToADataSpace(
+                mWindowInfo.colorspace.get(), BufferFormatToColorType(mWindowInfo.bufferFormat));
+    }
+    LOG_ALWAYS_FATAL_IF(mWindowInfo.dataspace == HAL_DATASPACE_UNKNOWN &&
+                                mWindowInfo.bufferFormat != AHARDWAREBUFFER_FORMAT_R8_UNORM,
+                        "Unsupported colorspace");
+
+    if (mNativeWindow) {
+        int err = ANativeWindow_setBuffersDataSpace(mNativeWindow.get(), mWindowInfo.dataspace);
+        if (err != 0) {
+            ALOGE("VulkanSurface::setColorSpace() native_window_set_buffers_data_space(%d) "
+                  "failed: %s (%d)",
+                  mWindowInfo.dataspace, strerror(-err), err);
+        }
+    }
 }
 
 } /* namespace renderthread */

@@ -36,7 +36,11 @@ import java.util.Objects;
  */
 @SystemApi
 public final class EuiccNotification implements Parcelable {
-    /** Event */
+    /**
+     * Event
+     *
+     * @removed mistakenly exposed previously
+     */
     @Retention(RetentionPolicy.SOURCE)
     @IntDef(flag = true, prefix = { "EVENT_" }, value = {
             EVENT_INSTALL,
@@ -44,7 +48,6 @@ public final class EuiccNotification implements Parcelable {
             EVENT_DISABLE,
             EVENT_DELETE
     })
-    /** @hide */
     public @interface Event {}
 
     /** A profile is downloaded and installed. */

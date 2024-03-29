@@ -31,7 +31,7 @@ import androidx.annotation.Nullable;
 
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto;
-import com.android.systemui.R;
+import com.android.systemui.res.R;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.plugins.ActivityStarter;
@@ -39,6 +39,7 @@ import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.qs.QSTile;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.qs.QSHost;
+import com.android.systemui.qs.QsEventLogger;
 import com.android.systemui.qs.logging.QSLogger;
 import com.android.systemui.qs.tileimpl.QSTileImpl;
 import com.android.systemui.statusbar.policy.BatteryController;
@@ -69,6 +70,7 @@ public class UiModeNightTile extends QSTileImpl<QSTile.BooleanState> implements
     @Inject
     public UiModeNightTile(
             QSHost host,
+            QsEventLogger uiEventLogger,
             @Background Looper backgroundLooper,
             @Main Handler mainHandler,
             FalsingManager falsingManager,
@@ -80,7 +82,7 @@ public class UiModeNightTile extends QSTileImpl<QSTile.BooleanState> implements
             BatteryController batteryController,
             LocationController locationController
     ) {
-        super(host, backgroundLooper, mainHandler, falsingManager, metricsLogger,
+        super(host, uiEventLogger, backgroundLooper, mainHandler, falsingManager, metricsLogger,
                 statusBarStateController, activityStarter, qsLogger);
         mBatteryController = batteryController;
         mUiModeManager = host.getUserContext().getSystemService(UiModeManager.class);
@@ -167,7 +169,6 @@ public class UiModeNightTile extends QSTileImpl<QSTile.BooleanState> implements
         state.icon = ResourceIcon.get(state.state == Tile.STATE_ACTIVE
                 ? R.drawable.qs_light_dark_theme_icon_on
                 : R.drawable.qs_light_dark_theme_icon_off);
-        state.showRippleEffect = false;
         state.expandedAccessibilityClassName = Switch.class.getName();
     }
 

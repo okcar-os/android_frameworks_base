@@ -38,6 +38,7 @@ import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.plugins.qs.QSTile.BooleanState;
 import com.android.systemui.qs.QSHost;
+import com.android.systemui.qs.QsEventLogger;
 import com.android.systemui.qs.logging.QSLogger;
 import com.android.systemui.qs.tileimpl.QSTileImpl;
 import com.android.systemui.statusbar.policy.BatteryController;
@@ -65,6 +66,7 @@ public class PowerShareTile extends QSTileImpl<BooleanState>
     @Inject
     public PowerShareTile(
             QSHost host,
+            QsEventLogger uiEventLogger,
             @Background Looper backgroundLooper,
             @Main Handler mainHandler,
             FalsingManager falsingManager,
@@ -72,8 +74,9 @@ public class PowerShareTile extends QSTileImpl<BooleanState>
             StatusBarStateController statusBarStateController,
             ActivityStarter activityStarter,
             QSLogger qsLogger,
-            BatteryController batteryController) {
-        super(host, backgroundLooper, mainHandler, falsingManager, metricsLogger,
+            BatteryController batteryController
+    ) {
+        super(host, uiEventLogger, backgroundLooper, mainHandler, falsingManager, metricsLogger,
                 statusBarStateController, activityStarter, qsLogger);
         mPowerShare = getPowerShare();
         if (mPowerShare == null) {
@@ -185,10 +188,6 @@ public class PowerShareTile extends QSTileImpl<BooleanState>
             return;
         }
 
-        if (state.slash == null) {
-            state.slash = new SlashState();
-        }
-
         state.icon = ResourceIcon.get(R.drawable.ic_qs_powershare);
         try {
             state.value = mPowerShare.isEnabled();
@@ -196,7 +195,6 @@ public class PowerShareTile extends QSTileImpl<BooleanState>
             state.value = false;
             ex.printStackTrace();
         }
-        state.slash.isSlashed = state.value;
         state.label = mContext.getString(R.string.quick_settings_powershare_label);
 
         if (mBatteryController.isPowerSave() || getBatteryLevel() < getMinBatteryLevel()) {

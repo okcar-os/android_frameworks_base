@@ -81,7 +81,9 @@ import android.graphics.Point;
 import android.graphics.Rect;
 import android.os.Debug;
 import android.os.IBinder;
+import android.os.RemoteException;
 import android.os.Trace;
+import android.util.ArrayMap;
 import android.util.ArraySet;
 import android.util.Pair;
 import android.util.Pools;
@@ -90,6 +92,7 @@ import android.util.Slog;
 import android.util.SparseArray;
 import android.util.proto.ProtoOutputStream;
 import android.view.DisplayInfo;
+import android.view.InsetsFrameProvider;
 import android.view.InsetsSource;
 import android.view.InsetsState;
 import android.view.MagnificationSpec;
@@ -123,7 +126,6 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
@@ -157,23 +159,25 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
     boolean mReparenting;
 
     /**
-     * Map of {@link InsetsState.InternalInsetsType} to the {@link InsetsSourceProvider} that
-     * provides local insets for all children of the current {@link WindowContainer}.
-     *
-     * Note that these InsetsSourceProviders are not part of the {@link InsetsStateController} and
-     * live here. These are supposed to provide insets only to the subtree of the current
+     * Map of the source ID to the {@link InsetsSource} for all children of the current
      * {@link WindowContainer}.
+     *
+     * Note that these sources are not part of the {@link InsetsStateController} and live here.
+     * These are supposed to provide insets only to the subtree of this {@link WindowContainer}.
      */
     @Nullable
-    SparseArray<InsetsSourceProvider> mLocalInsetsSourceProviders = null;
+    SparseArray<InsetsSource> mLocalInsetsSources = null;
 
     @Nullable
     protected InsetsSourceProvider mControllableInsetProvider;
 
     /**
-     * The insets sources provided by this windowContainer.
+     * The {@link InsetsSourceProvider}s provided by this window container.
      */
-    protected SparseArray<InsetsSource> mProvidedInsetsSources = null;
+    protected SparseArray<InsetsSourceProvider> mInsetsSourceProviders = null;
+
+    @Nullable
+    private ArrayMap<IBinder, DeathRecipient> mInsetsOwnerDeathRecipientMap;
 
     // List of children for this window container. List is in z-order as the children appear on
     // screen with the top-most window container at the tail of the list.
@@ -268,14 +272,6 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
     }
 
     /**
-     * Callback which is triggered while changing the parent, after setting up the surface but
-     * before asking the parent to assign child layers.
-     */
-    interface PreAssignChildLayersCallback {
-        void onPreAssignChildLayers();
-    }
-
-    /**
      * True if this an AppWindowToken and the activity which created this was launched with
      * ActivityOptions.setLaunchTaskBehind.
      *
@@ -317,6 +313,13 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
     private MagnificationSpec mLastMagnificationSpec;
 
     private boolean mIsFocusable = true;
+
+    /**
+     * This indicates whether this window is visible by policy. This can precede physical
+     * visibility ({@link #isVisible} - whether it has a surface showing on the screen) in
+     * cases where an animation is on-going.
+     */
+    protected boolean mVisibleRequested;
 
     /**
      * Used as a unique, cross-process identifier for this Container. It also serves a minimal
@@ -368,124 +371,176 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
      * {@link WindowState#mMergedLocalInsetsSources} by visiting the entire hierarchy.
      *
      * {@link WindowState#mAboveInsetsState} is updated by visiting all the windows in z-order
-     * top-to-bottom manner and considering the {@link WindowContainer#mProvidedInsetsSources}
+     * top-to-bottom manner and considering the {@link WindowContainer#mInsetsSourceProviders}
      * provided by the {@link WindowState}s at the top.
      * {@link WindowState#updateAboveInsetsState(InsetsState, SparseArray, ArraySet)} visits the
      * IME container in the correct order to make sure the IME insets are passed correctly to the
      * {@link WindowState}s below it.
      *
      * {@link WindowState#mMergedLocalInsetsSources} is updated by considering
-     * {@link WindowContainer#mLocalInsetsSourceProviders} provided by all the parents of the
-     * window.
-     * A given insetsType can be provided as a LocalInsetsSourceProvider only once in a
-     * Parent-to-leaf path.
+     * {@link WindowContainer#mLocalInsetsSources} provided by all the parents of the window.
      *
      * Examples: Please take a look at
      * {@link WindowContainerTests#testAddLocalInsetsSourceProvider()}
-     * {@link
-     * WindowContainerTests#testAddLocalInsetsSourceProvider_windowSkippedIfProvidingOnParent()}
      * {@link WindowContainerTests#testRemoveLocalInsetsSourceProvider()}.
      *
-     * @param aboveInsetsState The InsetsState of all the Windows above the current container.
-     * @param localInsetsSourceProvidersFromParent The local InsetsSourceProviders provided by all
-     *                                             the parents in the hierarchy of the current
-     *                                             container.
-     * @param insetsChangedWindows The windows which the insets changed have changed for.
+     * @param aboveInsetsState             The InsetsState of all the Windows above the current
+     *                                     container.
+     * @param localInsetsSourcesFromParent The local InsetsSourceProviders provided by all
+     *                                     the parents in the hierarchy of the current
+     *                                     container.
+     * @param insetsChangedWindows         The windows which the insets changed have changed for.
      */
     void updateAboveInsetsState(InsetsState aboveInsetsState,
-            SparseArray<InsetsSourceProvider> localInsetsSourceProvidersFromParent,
+            SparseArray<InsetsSource> localInsetsSourcesFromParent,
             ArraySet<WindowState> insetsChangedWindows) {
-        SparseArray<InsetsSourceProvider> mergedLocalInsetsSourceProviders =
-                localInsetsSourceProvidersFromParent;
-        if (mLocalInsetsSourceProviders != null && mLocalInsetsSourceProviders.size() != 0) {
-            mergedLocalInsetsSourceProviders = createShallowCopy(mergedLocalInsetsSourceProviders);
-            for (int i = 0; i < mLocalInsetsSourceProviders.size(); i++) {
-                mergedLocalInsetsSourceProviders.put(
-                        mLocalInsetsSourceProviders.keyAt(i),
-                        mLocalInsetsSourceProviders.valueAt(i));
-            }
-        }
+        final SparseArray<InsetsSource> mergedLocalInsetsSources =
+                createMergedSparseArray(localInsetsSourcesFromParent, mLocalInsetsSources);
 
         for (int i = mChildren.size() - 1; i >= 0; --i) {
-            mChildren.get(i).updateAboveInsetsState(aboveInsetsState,
-                    mergedLocalInsetsSourceProviders, insetsChangedWindows);
+            mChildren.get(i).updateAboveInsetsState(aboveInsetsState, mergedLocalInsetsSources,
+                    insetsChangedWindows);
         }
     }
 
-    static <T> SparseArray<T> createShallowCopy(SparseArray<T> inputArray) {
-        SparseArray<T> copyOfInput = new SparseArray<>(inputArray.size());
-        for (int i = 0; i < inputArray.size(); i++) {
-            copyOfInput.append(inputArray.keyAt(i), inputArray.valueAt(i));
+    static <T> SparseArray<T> createMergedSparseArray(SparseArray<T> sa1, SparseArray<T> sa2) {
+        final int size1 = sa1 != null ? sa1.size() : 0;
+        final int size2 = sa2 != null ? sa2.size() : 0;
+        final SparseArray<T> mergedArray = new SparseArray<>(size1 + size2);
+        if (size1 > 0) {
+            for (int i = 0; i < size1; i++) {
+                mergedArray.append(sa1.keyAt(i), sa1.valueAt(i));
+            }
         }
-        return copyOfInput;
+        if (size2 > 0) {
+            for (int i = 0; i < size2; i++) {
+                mergedArray.put(sa2.keyAt(i), sa2.valueAt(i));
+            }
+        }
+        return mergedArray;
     }
 
     /**
-     * Sets the given {@code providerFrame} as one of the insets provider for this window
-     * container. These insets are only passed to the subtree of the current WindowContainer.
-     * For a given WindowContainer-to-Leaf path, one insetsType can't be overridden more than once.
-     * If that happens, only the latest one will be chosen.
+     * Adds an {@link InsetsFrameProvider} which describes what insets should be provided to
+     * this {@link WindowContainer} and its children.
      *
-     * @param providerFrame the frame that will act as one of the insets providers for this window
-     *                      container
-     * @param insetsTypes the insets type which the providerFrame provides
+     * @param provider describes the insets type and the frame.
+     * @param owner owns the insets source which only exists when the owner is alive.
      */
-    void addLocalRectInsetsSourceProvider(Rect providerFrame,
-            @InsetsState.InternalInsetsType int[] insetsTypes) {
-        if (insetsTypes == null || insetsTypes.length == 0) {
-            throw new IllegalArgumentException("Insets type not specified.");
+    void addLocalInsetsFrameProvider(InsetsFrameProvider provider, IBinder owner) {
+        if (provider == null || owner == null) {
+            throw new IllegalArgumentException("Insets provider or owner not specified.");
         }
         if (mDisplayContent == null) {
             // This is possible this container is detached when WM shell is responding to a previous
             // request. WM shell will be updated when this container is attached again and the
             // insets need to be updated.
-            Slog.w(TAG, "Can't add local rect insets source provider when detached. " + this);
+            Slog.w(TAG, "Can't add insets frame provider when detached. " + this);
             return;
         }
-        if (mLocalInsetsSourceProviders == null) {
-            mLocalInsetsSourceProviders = new SparseArray<>();
+
+        if (mInsetsOwnerDeathRecipientMap == null) {
+            mInsetsOwnerDeathRecipientMap = new ArrayMap<>();
         }
-        for (int i = 0; i < insetsTypes.length; i++) {
-            InsetsSourceProvider insetsSourceProvider =
-                    mLocalInsetsSourceProviders.get(insetsTypes[i]);
-            if (insetsSourceProvider != null) {
-                if (DEBUG) {
-                    Slog.d(TAG, "The local insets provider for this type " + insetsTypes[i]
-                            + " already exists. Overwriting");
-                }
+        DeathRecipient deathRecipient = mInsetsOwnerDeathRecipientMap.get(owner);
+        if (deathRecipient == null) {
+            deathRecipient = new DeathRecipient(owner);
+            try {
+                owner.linkToDeath(deathRecipient, 0);
+            } catch (RemoteException e) {
+                Slog.w(TAG, "Failed to add source for " + provider + " since the owner has died.");
+                return;
             }
-            insetsSourceProvider = new RectInsetsSourceProvider(new InsetsSource(insetsTypes[i]),
-                    mDisplayContent.getInsetsStateController(), mDisplayContent);
-            mLocalInsetsSourceProviders.put(insetsTypes[i], insetsSourceProvider);
-            ((RectInsetsSourceProvider) insetsSourceProvider).setRect(providerFrame);
+            mInsetsOwnerDeathRecipientMap.put(owner, deathRecipient);
         }
+        final int id = provider.getId();
+        deathRecipient.addSourceId(id);
+        if (mLocalInsetsSources == null) {
+            mLocalInsetsSources = new SparseArray<>();
+        }
+        if (mLocalInsetsSources.get(id) != null) {
+            if (DEBUG) {
+                Slog.d(TAG, "The local insets source for this " + provider
+                        + " already exists. Overwriting.");
+            }
+        }
+        final InsetsSource source = new InsetsSource(id, provider.getType());
+        source.setFrame(provider.getArbitraryRectangle());
+        mLocalInsetsSources.put(id, source);
         mDisplayContent.getInsetsStateController().updateAboveInsetsState(true);
     }
 
-    void removeLocalInsetsSourceProvider(@InsetsState.InternalInsetsType int[] insetsTypes) {
-        if (insetsTypes == null || insetsTypes.length == 0) {
-            throw new IllegalArgumentException("Insets type not specified.");
-        }
-        if (mLocalInsetsSourceProviders == null) {
-            return;
+    private class DeathRecipient implements IBinder.DeathRecipient {
+
+        private final IBinder mOwner;
+        private final ArraySet<Integer> mSourceIds = new ArraySet<>();
+
+        DeathRecipient(IBinder owner) {
+            mOwner = owner;
         }
 
-        for (int i = 0; i < insetsTypes.length; i++) {
-            InsetsSourceProvider insetsSourceProvider =
-                    mLocalInsetsSourceProviders.get(insetsTypes[i]);
-            if (insetsSourceProvider == null) {
-                if (DEBUG) {
-                    Slog.d(TAG, "Given insets type " + insetsTypes[i] + " doesn't have a "
-                            + "local insetsSourceProvider.");
-                }
-                continue;
-            }
-            mLocalInsetsSourceProviders.remove(insetsTypes[i]);
+        void addSourceId(int id) {
+            mSourceIds.add(id);
         }
-        // Update insets if this window is attached.
-        if (mDisplayContent != null) {
+
+        void removeSourceId(int id) {
+            mSourceIds.remove(id);
+        }
+
+        boolean hasSource() {
+            return !mSourceIds.isEmpty();
+        }
+
+        @Override
+        public void binderDied() {
+            synchronized (mWmService.mGlobalLock) {
+                boolean changed = false;
+                for (int i = mSourceIds.size() - 1; i >= 0; i--) {
+                    changed |= removeLocalInsetsSource(mSourceIds.valueAt(i));
+                }
+                mSourceIds.clear();
+                mOwner.unlinkToDeath(this, 0);
+                mInsetsOwnerDeathRecipientMap.remove(mOwner);
+                if (changed && mDisplayContent != null) {
+                    mDisplayContent.getInsetsStateController().updateAboveInsetsState(true);
+                }
+            }
+        }
+    }
+
+    void removeLocalInsetsFrameProvider(InsetsFrameProvider provider, IBinder owner) {
+        if (provider == null || owner == null) {
+            throw new IllegalArgumentException("Insets provider or owner not specified.");
+        }
+        final int id = provider.getId();
+        if (removeLocalInsetsSource(id) && mDisplayContent != null) {
             mDisplayContent.getInsetsStateController().updateAboveInsetsState(true);
         }
+        if (mInsetsOwnerDeathRecipientMap == null) {
+            return;
+        }
+        final DeathRecipient deathRecipient = mInsetsOwnerDeathRecipientMap.get(owner);
+        if (deathRecipient == null) {
+            return;
+        }
+        deathRecipient.removeSourceId(id);
+        if (!deathRecipient.hasSource()) {
+            owner.unlinkToDeath(deathRecipient, 0);
+            mInsetsOwnerDeathRecipientMap.remove(owner);
+        }
+    }
+
+    private boolean removeLocalInsetsSource(int id) {
+        if (mLocalInsetsSources == null) {
+            return false;
+        }
+        if (mLocalInsetsSources.removeReturnOld(id) == null) {
+            if (DEBUG) {
+                Slog.d(TAG, "Given id " + Integer.toHexString(id) + " doesn't exist.");
+            }
+            return false;
+        }
+        return true;
     }
 
     /**
@@ -566,7 +621,6 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
             onDisplayChanged(dc);
             prevDc.setLayoutNeeded();
         }
-        getDisplayContent().layoutAndAssignWindowLayersIfNeeded();
 
         // Send onParentChanged notification here is we disabled sending it in setParent for
         // reparenting case.
@@ -599,11 +653,6 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
      */
     @Override
     void onParentChanged(ConfigurationContainer newParent, ConfigurationContainer oldParent) {
-        onParentChanged(newParent, oldParent, null);
-    }
-
-    void onParentChanged(ConfigurationContainer newParent, ConfigurationContainer oldParent,
-            PreAssignChildLayersCallback callback) {
         super.onParentChanged(newParent, oldParent);
         if (mParent == null) {
             return;
@@ -621,25 +670,23 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
             reparentSurfaceControl(getSyncTransaction(), mParent.mSurfaceControl);
         }
 
-        if (callback != null) {
-            callback.onPreAssignChildLayers();
-        }
-
         // Either way we need to ask the parent to assign us a Z-order.
         mParent.assignChildLayers();
-        scheduleAnimation();
     }
 
     void createSurfaceControl(boolean force) {
         setInitialSurfaceControlProperties(makeSurface());
     }
 
-    void setInitialSurfaceControlProperties(SurfaceControl.Builder b) {
+    void setInitialSurfaceControlProperties(Builder b) {
         setSurfaceControl(b.setCallsite("WindowContainer.setInitialSurfaceControlProperties").build());
         if (showSurfaceOnCreation()) {
             getSyncTransaction().show(mSurfaceControl);
         }
         updateSurfacePositionNonOrganized();
+        if (mLastMagnificationSpec != null) {
+            applyMagnificationSpec(getSyncTransaction(), mLastMagnificationSpec);
+        }
     }
 
     /**
@@ -660,7 +707,7 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
         mLastSurfacePosition.set(0, 0);
         mLastDeltaRotation = Surface.ROTATION_0;
 
-        final SurfaceControl.Builder b = mWmService.makeSurfaceBuilder(null)
+        final Builder b = mWmService.makeSurfaceBuilder(null)
                 .setContainerLayer()
                 .setName(getName());
 
@@ -765,6 +812,7 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
             parent.mTreeWeight += child.mTreeWeight;
             parent = parent.getParent();
         }
+        onChildVisibleRequestedChanged(child);
         onChildPositionChanged(child);
     }
 
@@ -793,6 +841,7 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
             parent.mTreeWeight -= child.mTreeWeight;
             parent = parent.getParent();
         }
+        onChildVisibleRequestedChanged(null);
         onChildPositionChanged(child);
     }
 
@@ -1028,8 +1077,8 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
         if (dc != null && dc != this) {
             dc.getPendingTransaction().merge(mPendingTransaction);
         }
-        if (dc != this && mLocalInsetsSourceProviders != null) {
-            mLocalInsetsSourceProviders.clear();
+        if (dc != this && mLocalInsetsSources != null) {
+            mLocalInsetsSources.clear();
         }
         for (int i = mChildren.size() - 1; i >= 0; --i) {
             final WindowContainer child = mChildren.get(i);
@@ -1040,14 +1089,24 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
         }
     }
 
-    public SparseArray<InsetsSource> getProvidedInsetsSources() {
-        if (mProvidedInsetsSources == null) {
-            mProvidedInsetsSources = new SparseArray<>();
-        }
-        return mProvidedInsetsSources;
+    /**
+     * Returns {@code true} if this node provides insets.
+     */
+    public boolean hasInsetsSourceProvider() {
+        return mInsetsSourceProviders != null;
     }
 
-    public DisplayContent getDisplayContent() {
+    /**
+     * Returns {@link InsetsSourceProvider}s provided by this node.
+     */
+    public SparseArray<InsetsSourceProvider> getInsetsSourceProviders() {
+        if (mInsetsSourceProviders == null) {
+            mInsetsSourceProviders = new SparseArray<>();
+        }
+        return mInsetsSourceProviders;
+    }
+
+    public final DisplayContent getDisplayContent() {
         return mDisplayContent;
     }
 
@@ -1076,14 +1135,10 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
         return parent != null && parent.isAttached();
     }
 
-    void setWaitingForDrawnIfResizingChanged() {
-        for (int i = mChildren.size() - 1; i >= 0; --i) {
-            final WindowContainer wc = mChildren.get(i);
-            wc.setWaitingForDrawnIfResizingChanged();
-        }
-    }
-
     void onResize() {
+        if (mControllableInsetProvider != null) {
+            mControllableInsetProvider.onWindowContainerBoundsChanged();
+        }
         for (int i = mChildren.size() - 1; i >= 0; --i) {
             final WindowContainer wc = mChildren.get(i);
             wc.onParentResize();
@@ -1103,6 +1158,9 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
     }
 
     void onMovedByResize() {
+        if (mControllableInsetProvider != null) {
+            mControllableInsetProvider.onWindowContainerBoundsChanged();
+        }
         for (int i = mChildren.size() - 1; i >= 0; --i) {
             final WindowContainer wc = mChildren.get(i);
             wc.onMovedByResize();
@@ -1282,13 +1340,46 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
      * the transition is finished.
      */
     boolean isVisibleRequested() {
-        for (int i = mChildren.size() - 1; i >= 0; --i) {
-            final WindowContainer child = mChildren.get(i);
-            if (child.isVisibleRequested()) {
-                return true;
+        return mVisibleRequested;
+    }
+
+    /** @return `true` if visibleRequested changed. */
+    @VisibleForTesting(visibility = VisibleForTesting.Visibility.PROTECTED)
+    boolean setVisibleRequested(boolean visible) {
+        if (mVisibleRequested == visible) return false;
+        mVisibleRequested = visible;
+        final WindowContainer parent = getParent();
+        if (parent != null) {
+            parent.onChildVisibleRequestedChanged(this);
+        }
+
+        // Notify listeners about visibility change.
+        for (int i = mListeners.size() - 1; i >= 0; --i) {
+            mListeners.get(i).onVisibleRequestedChanged(mVisibleRequested);
+        }
+        return true;
+    }
+
+    /**
+     * @param child The changed or added child. `null` if a child was removed.
+     * @return `true` if visibleRequested changed.
+     */
+    protected boolean onChildVisibleRequestedChanged(@Nullable WindowContainer child) {
+        final boolean childVisReq = child != null && child.isVisibleRequested();
+        boolean newVisReq = mVisibleRequested;
+        if (childVisReq && !mVisibleRequested) {
+            newVisReq = true;
+        } else if (!childVisReq && mVisibleRequested) {
+            newVisReq = false;
+            for (int i = mChildren.size() - 1; i >= 0; --i) {
+                final WindowContainer wc = mChildren.get(i);
+                if (wc != child && wc.isVisibleRequested()) {
+                    newVisReq = true;
+                    break;
+                }
             }
         }
-        return false;
+        return setVisibleRequested(newVisReq);
     }
 
     /**
@@ -1665,6 +1756,16 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
      */
     boolean fillsParent() {
         return false;
+    }
+
+    /** Computes LONG, SIZE and COMPAT parts of {@link Configuration#screenLayout}. */
+    static int computeScreenLayout(int sourceScreenLayout, int screenWidthDp,
+            int screenHeightDp) {
+        sourceScreenLayout = sourceScreenLayout
+                & (Configuration.SCREENLAYOUT_LONG_MASK | Configuration.SCREENLAYOUT_SIZE_MASK);
+        final int longSize = Math.max(screenWidthDp, screenHeightDp);
+        final int shortSize = Math.min(screenWidthDp, screenHeightDp);
+        return Configuration.reduceScreenLayout(sourceScreenLayout, longSize, shortSize);
     }
 
     // TODO: Users would have their own window containers under the display container?
@@ -2511,7 +2612,7 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
         } while (current != null);
     }
 
-    SurfaceControl.Builder makeSurface() {
+    Builder makeSurface() {
         final WindowContainer p = getParent();
         return p.makeChildSurface(this);
     }
@@ -2520,7 +2621,7 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
      * @param child The WindowContainer this child surface is for, or null if the Surface
      *              is not assosciated with a WindowContainer (e.g. a surface used for Dimming).
      */
-    SurfaceControl.Builder makeChildSurface(WindowContainer child) {
+    Builder makeChildSurface(WindowContainer child) {
         final WindowContainer p = getParent();
         // Give the parent a chance to set properties. In hierarchy v1 we rely
         // on this to set full-screen dimensions on all our Surface-less Layers.
@@ -2566,7 +2667,7 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
     void assignLayer(Transaction t, int layer) {
         // Don't assign layers while a transition animation is playing
         // TODO(b/173528115): establish robust best-practices around z-order fighting.
-        if (!mTransitionController.canAssignLayers()) return;
+        if (!mTransitionController.canAssignLayers(this)) return;
         final boolean changed = layer != mLastLayer || mLastRelativeToLayer != null;
         if (mSurfaceControl != null && changed) {
             setLayer(t, layer);
@@ -2603,6 +2704,10 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
 
     int getLastLayer() {
         return mLastLayer;
+    }
+
+    SurfaceControl getLastRelativeLayer() {
+        return mLastRelativeToLayer;
     }
 
     protected void setRelativeLayer(Transaction t, SurfaceControl relativeTo, int layer) {
@@ -2744,7 +2849,8 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
     void applyMagnificationSpec(Transaction t, MagnificationSpec spec) {
         if (shouldMagnify()) {
             t.setMatrix(mSurfaceControl, spec.scale, 0, 0, spec.scale)
-                    .setPosition(mSurfaceControl, spec.offsetX, spec.offsetY);
+                    .setPosition(mSurfaceControl, spec.offsetX + mLastSurfacePosition.x,
+                            spec.offsetY + mLastSurfacePosition.y);
             mLastMagnificationSpec = spec;
         } else {
             clearMagnificationSpec(t);
@@ -2757,7 +2863,7 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
     void clearMagnificationSpec(Transaction t) {
         if (mLastMagnificationSpec != null) {
             t.setMatrix(mSurfaceControl, 1, 0, 0, 1)
-                .setPosition(mSurfaceControl, 0, 0);
+                .setPosition(mSurfaceControl, mLastSurfacePosition.x, mLastSurfacePosition.y);
         }
         mLastMagnificationSpec = null;
         for (int i = 0; i < mChildren.size(); i++) {
@@ -2882,12 +2988,23 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
 
     /** Whether we can start change transition with this window and current display status. */
     boolean canStartChangeTransition() {
-        return !mWmService.mDisableTransitionAnimation && mDisplayContent != null
-                && getSurfaceControl() != null && !mDisplayContent.inTransition()
-                && isVisible() && isVisibleRequested() && okToAnimate()
-                // Pip animation will be handled by PipTaskOrganizer.
-                && !inPinnedWindowingMode() && getParent() != null
-                && !getParent().inPinnedWindowingMode();
+        if (mWmService.mDisableTransitionAnimation || !okToAnimate()) return false;
+
+        // Change transition only make sense as we go from "visible" to "visible".
+        if (mDisplayContent == null || getSurfaceControl() == null
+                || !isVisible() || !isVisibleRequested()) {
+            return false;
+        }
+
+        // Make sure display isn't a part of the transition already - needed for legacy transitions.
+        if (mDisplayContent.inTransition()) return false;
+
+        if (!ActivityTaskManagerService.isPip2ExperimentEnabled()) {
+            // Screenshots are turned off when PiP is undergoing changes.
+            return !inPinnedWindowingMode() && getParent() != null
+                    && !getParent().inPinnedWindowingMode();
+        }
+        return true;
     }
 
     /**
@@ -3166,12 +3283,11 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
 
             AnimationRunnerBuilder animationRunnerBuilder = new AnimationRunnerBuilder();
 
-            if (isTaskTransitOld(transit)) {
+            if (isTaskTransitOld(transit) && getWindowingMode() == WINDOWING_MODE_FULLSCREEN) {
                 animationRunnerBuilder.setTaskBackgroundColor(getTaskAnimationBackgroundColor());
                 // TODO: Remove when we migrate to shell (b/202383002)
                 if (mWmService.mTaskTransitionSpec != null) {
-                    animationRunnerBuilder.hideInsetSourceViewOverflows(
-                            mWmService.mTaskTransitionSpec.animationBoundInsets);
+                    animationRunnerBuilder.hideInsetSourceViewOverflows();
                 }
             }
 
@@ -3310,14 +3426,6 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
     }
 
     boolean canCreateRemoteAnimationTarget() {
-        return false;
-    }
-
-    /**
-     * {@code true} to indicate that this container can be a candidate of
-     * {@link AppTransitionController#getAnimationTargets(ArraySet, ArraySet, boolean) animation
-     * target}. */
-    boolean canBeAnimationTarget() {
         return false;
     }
 
@@ -3527,11 +3635,11 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
             pw.println(prefix + "mLastOrientationSource=" + mLastOrientationSource);
             pw.println(prefix + "deepestLastOrientationSource=" + getLastOrientationSource());
         }
-        if (mLocalInsetsSourceProviders != null && mLocalInsetsSourceProviders.size() != 0) {
-            pw.println(prefix + mLocalInsetsSourceProviders.size() + " LocalInsetsSourceProviders");
+        if (mLocalInsetsSources != null && mLocalInsetsSources.size() != 0) {
+            pw.println(prefix + mLocalInsetsSources.size() + " LocalInsetsSources");
             final String childPrefix = prefix + "  ";
-            for (int i = 0; i < mLocalInsetsSourceProviders.size(); ++i) {
-                mLocalInsetsSourceProviders.valueAt(i).dump(pw, childPrefix);
+            for (int i = 0; i < mLocalInsetsSources.size(); ++i) {
+                mLocalInsetsSources.valueAt(i).dump(childPrefix, pw);
             }
         }
     }
@@ -3573,8 +3681,11 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
                 && !mTransitionController.useShellTransitionsRotation()) {
             if (deltaRotation != Surface.ROTATION_0) {
                 updateSurfaceRotation(t, deltaRotation, null /* positionLeash */);
+                getPendingTransaction().setFixedTransformHint(mSurfaceControl,
+                        getWindowConfiguration().getDisplayRotation());
             } else if (deltaRotation != mLastDeltaRotation) {
                 t.setMatrix(mSurfaceControl, 1, 0, 0, 1);
+                getPendingTransaction().unsetFixedTransformHint(mSurfaceControl);
             }
         }
         mLastDeltaRotation = deltaRotation;
@@ -3814,13 +3925,12 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
 
     void setSyncGroup(@NonNull BLASTSyncEngine.SyncGroup group) {
         ProtoLog.v(WM_DEBUG_SYNC_ENGINE, "setSyncGroup #%d on %s", group.mSyncId, this);
-        if (group != null) {
-            if (mSyncGroup != null && mSyncGroup != group) {
-                // This can still happen if WMCore starts a new transition when there is ongoing
-                // sync transaction from Shell. Please file a bug if it happens.
-                throw new IllegalStateException("Can't sync on 2 engines simultaneously"
-                        + " currentSyncId=" + mSyncGroup.mSyncId + " newSyncId=" + group.mSyncId);
-            }
+        if (mSyncGroup != null && mSyncGroup != group) {
+            // This can still happen if WMCore starts a new transition when there is ongoing
+            // sync transaction from Shell. Please file a bug if it happens.
+            throw new IllegalStateException("Can't sync on 2 groups simultaneously"
+                    + " currentSyncId=" + mSyncGroup.mSyncId + " newSyncId=" + group.mSyncId
+                    + " wc=" + this);
         }
         mSyncGroup = group;
     }
@@ -3851,7 +3961,7 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
         return true;
     }
 
-    boolean useBLASTSync() {
+    boolean syncNextBuffer() {
         return mSyncState != SYNC_STATE_NONE;
     }
 
@@ -3862,12 +3972,16 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
      * @param cancel If true, this is being finished because it is leaving the sync group rather
      *               than due to the sync group completing.
      */
-    void finishSync(Transaction outMergedTransaction, boolean cancel) {
+    void finishSync(Transaction outMergedTransaction, BLASTSyncEngine.SyncGroup group,
+            boolean cancel) {
         if (mSyncState == SYNC_STATE_NONE) return;
+        final BLASTSyncEngine.SyncGroup syncGroup = getSyncGroup();
+        // If it's null, then we need to clean-up anyways.
+        if (syncGroup != null && group != syncGroup) return;
         ProtoLog.v(WM_DEBUG_SYNC_ENGINE, "finishSync cancel=%b for %s", cancel, this);
         outMergedTransaction.merge(mSyncTransaction);
         for (int i = mChildren.size() - 1; i >= 0; --i) {
-            mChildren.get(i).finishSync(outMergedTransaction, cancel);
+            mChildren.get(i).finishSync(outMergedTransaction, group, cancel);
         }
         if (cancel && mSyncGroup != null) mSyncGroup.onCancelSync(this);
         mSyncState = SYNC_STATE_NONE;
@@ -3882,7 +3996,7 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
      *
      * @return {@code true} if this subtree is finished waiting for sync participants.
      */
-    boolean isSyncFinished() {
+    boolean isSyncFinished(BLASTSyncEngine.SyncGroup group) {
         if (!isVisibleRequested()) {
             return true;
         }
@@ -3896,7 +4010,7 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
         // Loop from top-down.
         for (int i = mChildren.size() - 1; i >= 0; --i) {
             final WindowContainer child = mChildren.get(i);
-            final boolean childFinished = child.isSyncFinished();
+            final boolean childFinished = group.isIgnoring(child) || child.isSyncFinished(group);
             if (childFinished && child.isVisibleRequested() && child.fillsParent()) {
                 // Any lower children will be covered-up, so we can consider this finished.
                 return true;
@@ -3947,11 +4061,11 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
                 // This is getting removed.
                 if (oldParent.mSyncState != SYNC_STATE_NONE) {
                     // In order to keep the transaction in sync, merge it into the parent.
-                    finishSync(oldParent.mSyncTransaction, true /* cancel */);
+                    finishSync(oldParent.mSyncTransaction, getSyncGroup(), true /* cancel */);
                 } else if (mSyncGroup != null) {
                     // This is watched directly by the sync-group, so merge this transaction into
                     // into the sync-group so it isn't lost
-                    finishSync(mSyncGroup.getOrphanTransaction(), true /* cancel */);
+                    finishSync(mSyncGroup.getOrphanTransaction(), mSyncGroup, true /* cancel */);
                 } else {
                     throw new IllegalStateException("This container is in sync mode without a sync"
                             + " group: " + this);
@@ -3960,10 +4074,13 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
             } else if (mSyncGroup == null) {
                 // This is being reparented out of the sync-group. To prevent ordering issues on
                 // this container, immediately apply/cancel sync on it.
-                finishSync(getPendingTransaction(), true /* cancel */);
+                finishSync(getPendingTransaction(), getSyncGroup(), true /* cancel */);
                 return;
             }
             // Otherwise this is the "root" of a synced subtree, so continue on to preparation.
+        }
+        if (oldParent != null && newParent != null && !shouldUpdateSyncOnReparent()) {
+            return;
         }
 
         // This container's situation has changed so we need to restart its sync.
@@ -3977,6 +4094,11 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
             mSyncMethodOverride = BLASTSyncEngine.METHOD_UNDEFINED;
         }
         prepareSync();
+    }
+
+    /** Returns {@code true} if {@link #mSyncState} needs to be updated when reparenting. */
+    protected boolean shouldUpdateSyncOnReparent() {
+        return true;
     }
 
     void registerWindowContainerListener(WindowContainerListener listener) {
@@ -4026,7 +4148,7 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
                 final Configuration mergedConfiguration =
                         configurationMerger != null
                                 ? configurationMerger.merge(mergedOverrideConfig,
-                                receiver.getConfiguration())
+                                        receiver.getRequestedOverrideConfiguration())
                                 : supplier.getConfiguration();
                 receiver.onRequestedOverrideConfigurationChanged(mergedConfiguration);
             }
@@ -4100,13 +4222,14 @@ class WindowContainer<E extends WindowContainer> extends ConfigurationContainer<
             }
         }
 
-        private void hideInsetSourceViewOverflows(Set<Integer> insetTypes) {
-            final ArrayList<SurfaceControl> surfaceControls =
-                    new ArrayList<>(insetTypes.size());
-
-            for (int insetType : insetTypes) {
-                WindowContainerInsetsSourceProvider insetProvider = getDisplayContent()
-                        .getInsetsStateController().getSourceProvider(insetType);
+        private void hideInsetSourceViewOverflows() {
+            final SparseArray<InsetsSourceProvider> providers =
+                    getDisplayContent().getInsetsStateController().getSourceProviders();
+            for (int i = providers.size(); i >= 0; i--) {
+                final InsetsSourceProvider insetProvider = providers.valueAt(i);
+                if (!insetProvider.getSource().hasFlags(InsetsSource.FLAG_INSETS_ROUNDED_CORNER)) {
+                    return;
+                }
 
                 // Will apply it immediately to current leash and to all future inset animations
                 // until we disable it.

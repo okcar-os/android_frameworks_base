@@ -52,7 +52,7 @@ import com.android.internal.annotations.GuardedBy;
 import com.android.internal.net.LegacyVpnInfo;
 import com.android.internal.net.VpnConfig;
 import com.android.internal.net.VpnProfile;
-import com.android.systemui.R;
+import com.android.systemui.res.R;
 import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Background;
@@ -328,10 +328,16 @@ public class SecurityControllerImpl implements SecurityController {
         return mDevicePolicyManager.getDeviceOwnerComponentOnAnyUser();
     }
 
+    // TODO(b/259908270): remove
     @Override
     @DeviceOwnerType
     public int getDeviceOwnerType(@NonNull ComponentName admin) {
         return mDevicePolicyManager.getDeviceOwnerType(admin);
+    }
+
+    @Override
+    public boolean isFinancedDevice() {
+        return mDevicePolicyManager.isFinancedDevice();
     }
 
     @Override

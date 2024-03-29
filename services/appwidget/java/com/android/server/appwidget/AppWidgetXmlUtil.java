@@ -22,9 +22,9 @@ import android.appwidget.AppWidgetProviderInfo;
 import android.content.ComponentName;
 import android.os.Build;
 import android.text.TextUtils;
-import android.util.Slog;
-import android.util.TypedXmlPullParser;
-import android.util.TypedXmlSerializer;
+
+import com.android.modules.utils.TypedXmlPullParser;
+import com.android.modules.utils.TypedXmlSerializer;
 
 import java.io.IOException;
 import java.util.Objects;
@@ -83,8 +83,6 @@ public class AppWidgetXmlUtil {
         }
         if (info.label != null) {
             out.attribute(null, ATTR_LABEL, info.label);
-        } else if (AppWidgetServiceImpl.DEBUG_PROVIDER_INFO_CACHE) {
-            Slog.e(TAG, "Label is empty in " + info.provider);
         }
         out.attributeInt(null, ATTR_ICON, info.icon);
         out.attributeInt(null, ATTR_PREVIEW_IMAGE, info.previewImage);

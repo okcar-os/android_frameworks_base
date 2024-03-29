@@ -36,6 +36,7 @@ import com.android.systemui.dump.DumpManager
 import com.android.systemui.settings.UserTracker
 import com.android.systemui.util.settings.GlobalSettings
 import com.android.systemui.util.settings.SecureSettings
+import com.android.systemui.util.wrapper.BuildInfo
 import java.io.PrintWriter
 import java.util.concurrent.Executor
 import java.util.concurrent.atomic.AtomicBoolean
@@ -47,6 +48,7 @@ open class DeviceProvisionedControllerImpl @Inject constructor(
     private val globalSettings: GlobalSettings,
     private val userTracker: UserTracker,
     private val dumpManager: DumpManager,
+    private val buildInfo: BuildInfo,
     @Background private val backgroundHandler: Handler,
     @Main private val mainExecutor: Executor
 ) : DeviceProvisionedController,
@@ -60,7 +62,7 @@ open class DeviceProvisionedControllerImpl @Inject constructor(
     }
 
     private val deviceProvisionedUri = globalSettings.getUriFor(Settings.Global.DEVICE_PROVISIONED)
-    private val frpActiveUri = secureSettings.getUriFor(Settings.Secure.SECURE_FRP_MODE)
+    private val frpActiveUri = globalSettings.getUriFor(Settings.Global.SECURE_FRP_MODE)
     private val userSetupUri = secureSettings.getUriFor(Settings.Secure.USER_SETUP_COMPLETE)
 
     private val deviceProvisioned = AtomicBoolean(false)
@@ -146,7 +148,7 @@ open class DeviceProvisionedControllerImpl @Inject constructor(
                     .set(globalSettings.getInt(Settings.Global.DEVICE_PROVISIONED, 0) != 0)
         }
         if (updateFrp) {
-            frpActive.set(globalSettings.getInt(Settings.Secure.SECURE_FRP_MODE, 0) != 0)
+            frpActive.set(globalSettings.getInt(Settings.Global.SECURE_FRP_MODE, 0) != 0)
         }
         synchronized(lock) {
             if (updateUser == ALL_USERS) {
@@ -187,7 +189,7 @@ open class DeviceProvisionedControllerImpl @Inject constructor(
     }
 
     override fun isFrpActive(): Boolean {
-        return frpActive.get()
+        return frpActive.get() && !buildInfo.isDebuggable
     }
 
     override fun isUserSetup(user: Int): Boolean {

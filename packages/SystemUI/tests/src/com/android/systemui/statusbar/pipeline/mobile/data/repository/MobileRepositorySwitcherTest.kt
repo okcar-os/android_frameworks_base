@@ -16,9 +16,9 @@
 
 package com.android.systemui.statusbar.pipeline.mobile.data.repository
 
-import android.net.ConnectivityManager
 import android.telephony.SubscriptionInfo
 import android.telephony.SubscriptionManager
+import android.telephony.SubscriptionManager.PROFILE_CLASS_UNSET
 import android.telephony.TelephonyManager
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
@@ -27,6 +27,7 @@ import com.android.systemui.demomode.DemoModeController
 import com.android.systemui.dump.DumpManager
 import com.android.systemui.log.table.TableLogBuffer
 import com.android.systemui.log.table.TableLogBufferFactory
+import com.android.systemui.statusbar.pipeline.airplane.data.repository.FakeAirplaneModeRepository
 import com.android.systemui.statusbar.pipeline.mobile.data.MobileInputLogger
 import com.android.systemui.statusbar.pipeline.mobile.data.model.SubscriptionModel
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.demo.DemoMobileConnectionsRepository
@@ -35,6 +36,9 @@ import com.android.systemui.statusbar.pipeline.mobile.data.repository.demo.model
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.demo.validMobileEvent
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.prod.MobileConnectionsRepositoryImpl
 import com.android.systemui.statusbar.pipeline.mobile.util.FakeMobileMappingsProxy
+import com.android.systemui.statusbar.pipeline.mobile.util.FakeSubscriptionManagerProxy
+import com.android.systemui.statusbar.pipeline.shared.data.repository.ConnectivityRepository
+import com.android.systemui.statusbar.pipeline.shared.data.repository.FakeConnectivityRepository
 import com.android.systemui.statusbar.pipeline.wifi.data.repository.FakeWifiRepository
 import com.android.systemui.statusbar.pipeline.wifi.data.repository.demo.DemoModeWifiDataSource
 import com.android.systemui.util.mockito.any
@@ -51,6 +55,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
@@ -77,8 +82,8 @@ class MobileRepositorySwitcherTest : SysuiTestCase() {
     private lateinit var wifiDataSource: DemoModeWifiDataSource
     private lateinit var logFactory: TableLogBufferFactory
     private lateinit var wifiRepository: FakeWifiRepository
+    private lateinit var connectivityRepository: ConnectivityRepository
 
-    @Mock private lateinit var connectivityManager: ConnectivityManager
     @Mock private lateinit var subscriptionManager: SubscriptionManager
     @Mock private lateinit var telephonyManager: TelephonyManager
     @Mock private lateinit var logger: MobileInputLogger
@@ -88,14 +93,17 @@ class MobileRepositorySwitcherTest : SysuiTestCase() {
 
     private val fakeNetworkEventsFlow = MutableStateFlow<FakeNetworkEventModel?>(null)
     private val mobileMappings = FakeMobileMappingsProxy()
+    private val subscriptionManagerProxy = FakeSubscriptionManagerProxy()
 
+    private val testDispatcher = UnconfinedTestDispatcher()
     private val scope = CoroutineScope(IMMEDIATE)
 
     @Before
     fun setUp() {
         MockitoAnnotations.initMocks(this)
 
-        logFactory = TableLogBufferFactory(dumpManager, FakeSystemClock())
+        logFactory =
+            TableLogBufferFactory(dumpManager, FakeSystemClock(), mock(), testDispatcher, scope)
 
         // Never start in demo mode
         whenever(demoModeController.isInDemoMode).thenReturn(false)
@@ -110,10 +118,13 @@ class MobileRepositorySwitcherTest : SysuiTestCase() {
             }
         wifiRepository = FakeWifiRepository()
 
+        connectivityRepository = FakeConnectivityRepository()
+
         realRepo =
             MobileConnectionsRepositoryImpl(
-                connectivityManager,
+                connectivityRepository,
                 subscriptionManager,
+                subscriptionManagerProxy,
                 telephonyManager,
                 logger,
                 summaryLogger,
@@ -122,7 +133,9 @@ class MobileRepositorySwitcherTest : SysuiTestCase() {
                 context,
                 IMMEDIATE,
                 scope,
+                FakeAirplaneModeRepository(),
                 wifiRepository,
+                mock(),
                 mock(),
             )
 
@@ -150,7 +163,7 @@ class MobileRepositorySwitcherTest : SysuiTestCase() {
     }
 
     @Test
-    fun `active repo matches demo mode setting`() =
+    fun activeRepoMatchesDemoModeSetting() =
         runBlocking(IMMEDIATE) {
             whenever(demoModeController.isInDemoMode).thenReturn(false)
 
@@ -171,7 +184,7 @@ class MobileRepositorySwitcherTest : SysuiTestCase() {
         }
 
     @Test
-    fun `subscription list updates when demo mode changes`() =
+    fun subscriptionListUpdatesWhenDemoModeChanges() =
         runBlocking(IMMEDIATE) {
             whenever(demoModeController.isInDemoMode).thenReturn(false)
 
@@ -232,13 +245,33 @@ class MobileRepositorySwitcherTest : SysuiTestCase() {
         private val IMMEDIATE = Dispatchers.Main.immediate
 
         private const val SUB_1_ID = 1
+        private const val SUB_1_NAME = "Carrier $SUB_1_ID"
         private val SUB_1 =
-            mock<SubscriptionInfo>().also { whenever(it.subscriptionId).thenReturn(SUB_1_ID) }
-        private val MODEL_1 = SubscriptionModel(subscriptionId = SUB_1_ID)
+            mock<SubscriptionInfo>().also {
+                whenever(it.subscriptionId).thenReturn(SUB_1_ID)
+                whenever(it.carrierName).thenReturn(SUB_1_NAME)
+                whenever(it.profileClass).thenReturn(PROFILE_CLASS_UNSET)
+            }
+        private val MODEL_1 =
+            SubscriptionModel(
+                subscriptionId = SUB_1_ID,
+                carrierName = SUB_1_NAME,
+                profileClass = PROFILE_CLASS_UNSET,
+            )
 
         private const val SUB_2_ID = 2
+        private const val SUB_2_NAME = "Carrier $SUB_2_ID"
         private val SUB_2 =
-            mock<SubscriptionInfo>().also { whenever(it.subscriptionId).thenReturn(SUB_2_ID) }
-        private val MODEL_2 = SubscriptionModel(subscriptionId = SUB_2_ID)
+            mock<SubscriptionInfo>().also {
+                whenever(it.subscriptionId).thenReturn(SUB_2_ID)
+                whenever(it.carrierName).thenReturn(SUB_2_NAME)
+                whenever(it.profileClass).thenReturn(PROFILE_CLASS_UNSET)
+            }
+        private val MODEL_2 =
+            SubscriptionModel(
+                subscriptionId = SUB_2_ID,
+                carrierName = SUB_2_NAME,
+                profileClass = PROFILE_CLASS_UNSET,
+            )
     }
 }

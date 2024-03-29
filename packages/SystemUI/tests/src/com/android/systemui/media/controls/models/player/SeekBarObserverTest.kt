@@ -24,7 +24,7 @@ import android.view.View
 import android.widget.SeekBar
 import android.widget.TextView
 import androidx.test.filters.SmallTest
-import com.android.systemui.R
+import com.android.systemui.res.R
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.media.controls.ui.SquigglyProgress
 import com.google.common.truth.Truth.assertThat
@@ -233,5 +233,18 @@ class SeekBarObserverTest : SysuiTestCase() {
         observer.onChanged(data1)
         assertThat(seekBarView.progress).isEqualTo(4000)
         verify(mockSeekbarAnimator).start()
+    }
+
+    @Test
+    fun seekbarActive_animationsDisabled() {
+        // WHEN playing, but animations have been disabled
+        observer.animationEnabled = false
+        val isPlaying = true
+        val isScrubbing = false
+        val data = SeekBarViewModel.Progress(true, true, isPlaying, isScrubbing, 3000, 120000)
+        observer.onChanged(data)
+
+        // THEN progress drawable does not animate
+        verify(mockSquigglyProgress).animate = false
     }
 }

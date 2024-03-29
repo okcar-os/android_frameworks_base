@@ -20,14 +20,12 @@ import static android.app.WindowConfiguration.WINDOWING_MODE_FULLSCREEN;
 import static android.content.res.Configuration.ORIENTATION_LANDSCAPE;
 import static android.content.res.Configuration.ORIENTATION_PORTRAIT;
 import static android.content.res.Configuration.ORIENTATION_UNDEFINED;
-import static android.view.InsetsState.ITYPE_NAVIGATION_BAR;
-import static android.view.InsetsState.ITYPE_STATUS_BAR;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.content.res.Configuration.Orientation;
-import android.view.InsetsVisibilities;
 import android.view.Surface;
+import android.view.WindowInsets.Type;
 
 /**
  * Policy to decide whether to enforce screen rotation lock for optimisation of the screen rotation
@@ -46,7 +44,7 @@ final class DisplayRotationImmersiveAppCompatPolicy {
             @NonNull final DisplayRotation displayRotation,
             @NonNull final DisplayContent displayContent) {
         if (!letterboxConfiguration
-                .isDisplayRotationImmersiveAppCompatPolicyEnabled(/* checkDeviceConfig */ false)) {
+                .isDisplayRotationImmersiveAppCompatPolicyEnabledAtBuildTime()) {
             return null;
         }
 
@@ -89,8 +87,7 @@ final class DisplayRotationImmersiveAppCompatPolicy {
      * @return {@code true}, if there is a need to lock screen rotation, {@code false} otherwise.
      */
     boolean isRotationLockEnforced(@Surface.Rotation final int proposedRotation) {
-        if (!mLetterboxConfiguration.isDisplayRotationImmersiveAppCompatPolicyEnabled(
-                /* checkDeviceConfig */ true)) {
+        if (!mLetterboxConfiguration.isDisplayRotationImmersiveAppCompatPolicyEnabled()) {
             return false;
         }
         synchronized (mDisplayContent.mWmService.mGlobalLock) {
@@ -143,9 +140,8 @@ final class DisplayRotationImmersiveAppCompatPolicy {
         if (mainWindow == null) {
             return false;
         }
-        InsetsVisibilities insetsVisibilities = mainWindow.getRequestedVisibilities();
-        return !insetsVisibilities.getVisibility(ITYPE_STATUS_BAR)
-                && !insetsVisibilities.getVisibility(ITYPE_NAVIGATION_BAR);
+        return (mainWindow.getRequestedVisibleTypes()
+                & (Type.statusBars() | Type.navigationBars())) == 0;
     }
 
     @Orientation

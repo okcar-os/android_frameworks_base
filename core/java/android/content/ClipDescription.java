@@ -48,6 +48,7 @@ import java.util.Map;
  * developer guide.</p>
  * </div>
  */
+@android.ravenwood.annotation.RavenwoodKeepWholeClass
 public class ClipDescription implements Parcelable {
     /**
      * The MIME type for a clip holding plain text.
@@ -158,7 +159,6 @@ public class ClipDescription implements Parcelable {
      *     This extra can be used to indicate that a ClipData comes from a separate device rather
      *     than being local. It is a rendering hint that can be used to take different behavior
      *     based on the source device of copied data.
-     * @hide
      */
     public static final String EXTRA_IS_REMOTE_DEVICE = "android.content.extra.IS_REMOTE_DEVICE";
 

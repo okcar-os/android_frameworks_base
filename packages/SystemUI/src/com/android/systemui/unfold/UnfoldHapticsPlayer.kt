@@ -1,6 +1,7 @@
 package com.android.systemui.unfold
 
 import android.os.SystemProperties
+import android.os.VibrationAttributes
 import android.os.VibrationEffect
 import android.os.Vibrator
 import com.android.systemui.dagger.qualifiers.Main
@@ -22,6 +23,8 @@ constructor(
 ) : TransitionProgressListener {
 
     private var isFirstAnimationAfterUnfold = false
+    private val touchVibrationAttributes =
+            VibrationAttributes.createForUsage(VibrationAttributes.USAGE_HARDWARE_FEEDBACK)
 
     init {
         if (vibrator != null) {
@@ -71,20 +74,20 @@ constructor(
     }
 
     private fun playHaptics() {
-        vibrator?.vibrate(effect)
+        vibrator?.vibrate(effect, touchVibrationAttributes)
     }
 
     private val hapticsScale: Float
         get() {
-            val intensityString = SystemProperties.get("persist.unfold.haptics_scale", "0.1")
-            return intensityString.toFloatOrNull() ?: 0.1f
+            val intensityString = SystemProperties.get("persist.unfold.haptics_scale", "0.5")
+            return intensityString.toFloatOrNull() ?: 0.5f
         }
 
     private val hapticsScaleTick: Float
         get() {
             val intensityString =
-                SystemProperties.get("persist.unfold.haptics_scale_end_tick", "0.6")
-            return intensityString.toFloatOrNull() ?: 0.6f
+                SystemProperties.get("persist.unfold.haptics_scale_end_tick", "1.0")
+            return intensityString.toFloatOrNull() ?: 1.0f
         }
 
     private val primitivesCount: Int

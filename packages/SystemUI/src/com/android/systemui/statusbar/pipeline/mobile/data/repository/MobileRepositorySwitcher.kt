@@ -21,10 +21,10 @@ import androidx.annotation.VisibleForTesting
 import com.android.settingslib.SignalIcon
 import com.android.settingslib.mobile.MobileMappings
 import com.android.systemui.common.coroutine.ConflatedCallbackFlow.conflatedCallbackFlow
+import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.demomode.DemoMode
 import com.android.systemui.demomode.DemoModeController
-import com.android.systemui.statusbar.pipeline.mobile.data.model.MobileConnectivityModel
 import com.android.systemui.statusbar.pipeline.mobile.data.model.SubscriptionModel
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.demo.DemoMobileConnectionsRepository
 import com.android.systemui.statusbar.pipeline.mobile.data.repository.prod.MobileConnectionsRepositoryImpl
@@ -63,6 +63,7 @@ import kotlinx.coroutines.flow.stateIn
  */
 @Suppress("EXPERIMENTAL_IS_NOT_ENABLED")
 @OptIn(ExperimentalCoroutinesApi::class)
+@SysUISingleton
 class MobileRepositorySwitcher
 @Inject
 constructor(
@@ -150,18 +151,35 @@ constructor(
     override val defaultMobileIconGroup: Flow<SignalIcon.MobileIconGroup> =
         activeRepo.flatMapLatest { it.defaultMobileIconGroup }
 
+    override val isAnySimSecure: Flow<Boolean> = activeRepo.flatMapLatest { it.isAnySimSecure }
+    override fun getIsAnySimSecure(): Boolean = activeRepo.value.getIsAnySimSecure()
+
     override val defaultDataSubId: StateFlow<Int> =
         activeRepo
             .flatMapLatest { it.defaultDataSubId }
             .stateIn(scope, SharingStarted.WhileSubscribed(), realRepository.defaultDataSubId.value)
 
-    override val defaultMobileNetworkConnectivity: StateFlow<MobileConnectivityModel> =
+    override val mobileIsDefault: StateFlow<Boolean> =
         activeRepo
-            .flatMapLatest { it.defaultMobileNetworkConnectivity }
+            .flatMapLatest { it.mobileIsDefault }
+            .stateIn(scope, SharingStarted.WhileSubscribed(), realRepository.mobileIsDefault.value)
+
+    override val hasCarrierMergedConnection: StateFlow<Boolean> =
+        activeRepo
+            .flatMapLatest { it.hasCarrierMergedConnection }
             .stateIn(
                 scope,
                 SharingStarted.WhileSubscribed(),
-                realRepository.defaultMobileNetworkConnectivity.value
+                realRepository.hasCarrierMergedConnection.value,
+            )
+
+    override val defaultConnectionIsValidated: StateFlow<Boolean> =
+        activeRepo
+            .flatMapLatest { it.defaultConnectionIsValidated }
+            .stateIn(
+                scope,
+                SharingStarted.WhileSubscribed(),
+                realRepository.defaultConnectionIsValidated.value
             )
 
     override fun getRepoForSubId(subId: Int): MobileConnectionRepository {
@@ -170,4 +188,11 @@ constructor(
         }
         return realRepository.getRepoForSubId(subId)
     }
+
+    override suspend fun isInEcmMode(): Boolean =
+        if (isDemoMode.value) {
+            demoMobileConnectionsRepository.isInEcmMode()
+        } else {
+            realRepository.isInEcmMode()
+        }
 }

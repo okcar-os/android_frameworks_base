@@ -18,6 +18,8 @@ package com.android.systemui.statusbar.connectivity;
 
 import static android.telephony.AccessNetworkConstants.TRANSPORT_TYPE_WWAN;
 import static android.telephony.NetworkRegistrationInfo.DOMAIN_PS;
+import static android.telephony.NetworkRegistrationInfo.REGISTRATION_STATE_DENIED;
+import static android.telephony.NetworkRegistrationInfo.REGISTRATION_STATE_HOME;
 
 import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.assertNotNull;
@@ -70,7 +72,7 @@ import com.android.systemui.SysuiTestCase;
 import com.android.systemui.broadcast.BroadcastDispatcher;
 import com.android.systemui.demomode.DemoModeController;
 import com.android.systemui.dump.DumpManager;
-import com.android.systemui.plugins.log.LogBuffer;
+import com.android.systemui.log.LogBuffer;
 import com.android.systemui.settings.UserTracker;
 import com.android.systemui.statusbar.pipeline.StatusBarPipelineFlags;
 import com.android.systemui.statusbar.pipeline.mobile.util.FakeMobileMappingsProxy;
@@ -340,6 +342,11 @@ public class NetworkControllerBaseTest extends SysuiTestCase {
     }
 
     public void setConnectivityViaCallbackInNetworkController(
+            Network network, NetworkCapabilities networkCapabilities) {
+        mDefaultCallbackInNetworkController.onCapabilitiesChanged(network, networkCapabilities);
+    }
+
+    public void setConnectivityViaCallbackInNetworkController(
             int networkType, boolean validated, boolean isConnected, WifiInfo wifiInfo) {
         final NetworkCapabilities.Builder builder =
                 new NetworkCapabilities.Builder(mNetCapabilities);
@@ -349,6 +356,13 @@ public class NetworkControllerBaseTest extends SysuiTestCase {
         setConnectivityCommon(builder, networkType, validated, isConnected);
         mDefaultCallbackInNetworkController.onCapabilitiesChanged(
                 mock(Network.class), builder.build());
+    }
+
+    public void setConnectivityViaDefaultAndNormalCallbackInWifiTracker(
+            Network network, NetworkCapabilities networkCapabilities) {
+        mNetworkCallback.onAvailable(network);
+        mNetworkCallback.onCapabilitiesChanged(network, networkCapabilities);
+        mDefaultCallbackInWifiTracker.onCapabilitiesChanged(network, networkCapabilities);
     }
 
     public void setConnectivityViaCallbackInWifiTracker(
@@ -427,11 +441,29 @@ public class NetworkControllerBaseTest extends SysuiTestCase {
 
     public void setVoiceRegState(int voiceRegState) {
         when(mServiceState.getState()).thenReturn(voiceRegState);
+        when(mServiceState.getVoiceRegState()).thenReturn(voiceRegState);
         updateServiceState();
     }
 
-    public void setDataRegState(int dataRegState) {
-        when(mServiceState.getDataRegistrationState()).thenReturn(dataRegState);
+    public void setDataRegInService(boolean inService) {
+        // mFakeRegInfo#isInService()
+        // Utils#isInService uses NetworkRegistrationInfo#isInService(). Since we can't
+        // mock the answer here, just set the bit based on what the caller wants
+        NetworkRegistrationInfo.Builder builder = new NetworkRegistrationInfo.Builder()
+                .setTransportType(TRANSPORT_TYPE_WWAN)
+                .setDomain(DOMAIN_PS)
+                .setAccessNetworkTechnology(TelephonyManager.NETWORK_TYPE_LTE);
+
+        if (inService) {
+            builder.setRegistrationState(REGISTRATION_STATE_HOME);
+        } else {
+            builder.setRegistrationState(REGISTRATION_STATE_DENIED);
+        }
+
+        NetworkRegistrationInfo fakeRegInfo = builder.build();
+        when(mServiceState.getNetworkRegistrationInfo(DOMAIN_PS, TRANSPORT_TYPE_WWAN))
+                .thenReturn(fakeRegInfo);
+
         updateServiceState();
     }
 
@@ -646,3 +678,4 @@ public class NetworkControllerBaseTest extends SysuiTestCase {
         assertEquals("Data network name", expected, mNetworkController.getMobileDataNetworkName());
     }
 }
+

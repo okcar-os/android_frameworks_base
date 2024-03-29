@@ -15,6 +15,18 @@
  */
 
 package com.android.systemui.keyguard.domain.interactor
+
+import android.animation.ValueAnimator
+import android.util.Log
+import com.android.systemui.keyguard.data.repository.KeyguardTransitionRepository
+import com.android.systemui.keyguard.shared.model.KeyguardState
+import com.android.systemui.keyguard.shared.model.TransitionInfo
+import com.android.systemui.keyguard.shared.model.TransitionModeOnCanceled
+import com.android.systemui.util.kotlin.sample
+import java.util.UUID
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
+
 /**
  * Each TransitionInteractor is responsible for determining under which conditions to notify
  * [KeyguardTransitionRepository] to signal a transition. When (and if) the transition occurs is
@@ -26,30 +38,71 @@ package com.android.systemui.keyguard.domain.interactor
  * MUST list implementing classes in dagger module [StartKeyguardTransitionModule] and also in the
  * 'when' clause of [KeyguardTransitionCoreStartable]
  */
-sealed class TransitionInteractor(val name: String) {
+sealed class TransitionInteractor(
+    val fromState: KeyguardState,
+) {
+    val name = this::class.simpleName ?: "UnknownTransitionInteractor"
 
+    abstract val transitionRepository: KeyguardTransitionRepository
+    abstract val transitionInteractor: KeyguardTransitionInteractor
     abstract fun start()
 
-    fun <A, B, C> toTriple(a: A, b: B, c: C) = Triple(a, b, c)
+    fun startTransitionTo(
+        toState: KeyguardState,
+        animator: ValueAnimator? = getDefaultAnimatorForTransitionsToState(toState),
+        modeOnCanceled: TransitionModeOnCanceled = TransitionModeOnCanceled.LAST_VALUE
+    ): UUID? {
+        if (
+            fromState != transitionInteractor.startedKeyguardState.replayCache.last() &&
+                fromState != transitionInteractor.finishedKeyguardState.replayCache.last()
+        ) {
+            Log.e(
+                name,
+                "startTransition: We were asked to transition from " +
+                    "$fromState to $toState, however we last finished a transition to " +
+                    "${transitionInteractor.finishedKeyguardState.replayCache.last()}, " +
+                    "and last started a transition to " +
+                    "${transitionInteractor.startedKeyguardState.replayCache.last()}. " +
+                    "Ignoring startTransition, but this should never happen."
+            )
+            return null
+        }
 
-    fun <A, B, C> toTriple(a: A, bc: Pair<B, C>) = Triple(a, bc.first, bc.second)
+        return transitionRepository.startTransition(
+            TransitionInfo(
+                name,
+                fromState,
+                toState,
+                animator,
+                modeOnCanceled,
+            )
+        )
+    }
 
-    fun <A, B, C> toTriple(ab: Pair<A, B>, c: C) = Triple(ab.first, ab.second, c)
+    /** This signal may come in before the occlusion signal, and can provide a custom transition */
+    fun listenForTransitionToCamera(
+        scope: CoroutineScope,
+        keyguardInteractor: KeyguardInteractor,
+    ) {
+        scope.launch {
+            keyguardInteractor.onCameraLaunchDetected
+                .sample(transitionInteractor.finishedKeyguardState)
+                .collect { finishedKeyguardState ->
+                    // Other keyguard state transitions may trigger on the first power button push,
+                    // so use the last finishedKeyguardState to determine the overriding FROM state
+                    if (finishedKeyguardState == fromState) {
+                        startTransitionTo(
+                            toState = KeyguardState.OCCLUDED,
+                            modeOnCanceled = TransitionModeOnCanceled.RESET,
+                        )
+                    }
+                }
+        }
+    }
 
-    fun <A, B, C, D> toQuad(a: A, b: B, c: C, d: D) = Quad(a, b, c, d)
-
-    fun <A, B, C, D> toQuad(a: A, bcd: Triple<B, C, D>) = Quad(a, bcd.first, bcd.second, bcd.third)
-
-    fun <A, B, C, D, E> toQuint(a: A, bcde: Quad<B, C, D, E>) =
-        Quint(a, bcde.first, bcde.second, bcde.third, bcde.fourth)
+    /**
+     * Returns a ValueAnimator to be used for transitions to [toState], if one is not explicitly
+     * passed to [startTransitionTo].
+     */
+    abstract fun getDefaultAnimatorForTransitionsToState(toState: KeyguardState): ValueAnimator?
 }
-
-data class Quad<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
-
-data class Quint<A, B, C, D, E>(
-    val first: A,
-    val second: B,
-    val third: C,
-    val fourth: D,
-    val fifth: E
-)

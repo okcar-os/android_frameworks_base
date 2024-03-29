@@ -16,6 +16,7 @@
 
 package android.os;
 
+import android.annotation.FlaggedApi;
 import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.app.AppGlobals;
@@ -982,6 +983,46 @@ public final class Debug
 
 
     /**
+     * Wait until a debugger attaches. As soon as a debugger attaches,
+     * suspend all Java threads and send VM_START (a.k.a VM_INIT)
+     * packet.
+     *
+     * @hide
+     */
+    public static void suspendAllAndSendVmStart() {
+        if (!VMDebug.isDebuggingEnabled()) {
+            return;
+        }
+
+        // if DDMS is listening, inform them of our plight
+        System.out.println("Sending WAIT chunk");
+        byte[] data = new byte[] { 0 };     // 0 == "waiting for debugger"
+        Chunk waitChunk = new Chunk(ChunkHandler.type("WAIT"), data, 0, 1);
+        DdmServer.sendChunk(waitChunk);
+
+        // We must wait until a debugger is connected (debug socket is
+        // open and at least one non-DDM JDWP packedt has been received.
+        // This guarantees that oj-libjdwp has been attached and that
+        // ART's default implementation of suspendAllAndSendVmStart has
+        // been replaced with an implementation that will suspendAll and
+        // send VM_START.
+        System.out.println("Waiting for debugger first packet");
+
+        mWaiting = true;
+        while (!isDebuggerConnected()) {
+            try {
+                Thread.sleep(100);
+            } catch (InterruptedException ie) {
+            }
+        }
+        mWaiting = false;
+
+        System.out.println("Debug.suspendAllAndSentVmStart");
+        VMDebug.suspendAllAndSendVmStart();
+        System.out.println("Debug.suspendAllAndSendVmStart, resumed");
+    }
+
+    /**
      * Wait until a debugger attaches.  As soon as the debugger attaches,
      * this returns, so you will need to place a breakpoint after the
      * waitForDebugger() call if you want to start tracing immediately.
@@ -1155,6 +1196,8 @@ public final class Debug
      * consequences.
      *
      * To temporarily enable tracing, use {@link #startNativeTracing()}.
+     *
+     * @deprecated Please use other tracing method in this class.
      */
     public static void enableEmulatorTraceOutput() {
         Log.w(TAG, "Unimplemented");
@@ -1911,6 +1954,23 @@ public final class Debug
      */
     public static native long getPss(int pid, long[] outUssSwapPssRss, long[] outMemtrack);
 
+    /**
+     * Retrieves the RSS memory used by the process as given by the status file.
+     */
+    @FlaggedApi(Flags.FLAG_REMOVE_APP_PROFILER_PSS_COLLECTION)
+    public static native long getRss();
+
+    /**
+     * Retrieves the RSS memory used by the process as given by the status file. Optionally supply a
+     * long array of up to 4 entries to retrieve the total memtrack reported size, memtrack
+     * graphics, memtrack gl, and memtrack other.
+     *
+     * @return The RSS memory usage, or 0 if retrieval failed (i.e. the PID is gone).
+     * @hide
+     */
+    @FlaggedApi(Flags.FLAG_REMOVE_APP_PROFILER_PSS_COLLECTION)
+    public static native long getRss(int pid, long[] outMemtrack);
+
     /** @hide */
     public static final int MEMINFO_TOTAL = 0;
     /** @hide */
@@ -1954,7 +2014,21 @@ public final class Debug
     /** @hide */
     public static final int MEMINFO_UNEVICTABLE = 18;
     /** @hide */
-    public static final int MEMINFO_COUNT = 19;
+    public static final int MEMINFO_AVAILABLE = 19;
+    /** @hide */
+    public static final int MEMINFO_ACTIVE_ANON = 20;
+    /** @hide */
+    public static final int MEMINFO_INACTIVE_ANON = 21;
+    /** @hide */
+    public static final int MEMINFO_ACTIVE_FILE = 22;
+    /** @hide */
+    public static final int MEMINFO_INACTIVE_FILE = 23;
+    /** @hide */
+    public static final int MEMINFO_CMA_TOTAL = 24;
+    /** @hide */
+    public static final int MEMINFO_CMA_FREE = 25;
+    /** @hide */
+    public static final int MEMINFO_COUNT = 26;
 
     /**
      * Retrieves /proc/meminfo.  outSizes is filled with fields
@@ -2628,4 +2702,13 @@ public final class Debug
      * @hide
      */
     public static native boolean isVmapStack();
+
+    /**
+     * Log internal statistics about the allocator.
+     * @return true if the statistics were logged properly, false if not.
+     *
+     * @hide
+     */
+    public static native boolean logAllocatorStats();
+
 }

@@ -47,9 +47,8 @@ import android.util.Log;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.config.sysui.SystemUiDeviceConfigFlags;
-import com.android.systemui.R;
+import com.android.systemui.res.R;
 import com.android.systemui.flags.FeatureFlags;
-import com.android.systemui.flags.Flags;
 import com.android.systemui.screenshot.ScreenshotController.SavedImageData.ActionTransition;
 
 import com.google.common.util.concurrent.ListenableFuture;
@@ -121,16 +120,13 @@ class SaveImageInBackgroundTask extends AsyncTask<String, Void, Void> {
         }
         // TODO: move to constructor / from ScreenshotRequest
         final UUID requestId = UUID.randomUUID();
-        final UserHandle user = mFlags.isEnabled(Flags.SCREENSHOT_WORK_PROFILE_POLICY)
-                ? mParams.owner : getUserHandleOfForegroundApplication(mContext);
 
         Thread.currentThread().setPriority(Thread.MAX_PRIORITY);
 
         Bitmap image = mParams.image;
         mScreenshotId = String.format(SCREENSHOT_ID_TEMPLATE, requestId);
 
-        boolean savingToOtherUser = mFlags.isEnabled(Flags.SCREENSHOT_WORK_PROFILE_POLICY)
-                && (user != Process.myUserHandle());
+        boolean savingToOtherUser = mParams.owner != Process.myUserHandle();
         // Smart actions don't yet work for cross-user saves.
         boolean smartActionsEnabled = !savingToOtherUser
                 && DeviceConfig.getBoolean(DeviceConfig.NAMESPACE_SYSTEMUI,
@@ -142,7 +138,7 @@ class SaveImageInBackgroundTask extends AsyncTask<String, Void, Void> {
                 // queried and surfaced before image compress/export. Action intent would not be
                 // used, because it does not contain image URL.
                 Notification.Action quickShare =
-                        queryQuickShareAction(mScreenshotId, image, user, null);
+                        queryQuickShareAction(mScreenshotId, image, mParams.owner, null);
                 if (quickShare != null) {
                     mQuickShareData.quickShareAction = quickShare;
                     mParams.mQuickShareActionsReadyListener.onActionsReady(mQuickShareData);
@@ -152,7 +148,7 @@ class SaveImageInBackgroundTask extends AsyncTask<String, Void, Void> {
             // Call synchronously here since already on a background thread.
             ListenableFuture<ImageExporter.Result> future =
                     mImageExporter.export(Runnable::run, requestId, image, mParams.owner,
-                            params != null ? params[0] : null);
+                            mParams.displayId, params != null ? params[0] : null);
             ImageExporter.Result result = future.get();
             Log.d(TAG, "Saved screenshot: " + result);
             final Uri uri = result.uri;
@@ -162,7 +158,7 @@ class SaveImageInBackgroundTask extends AsyncTask<String, Void, Void> {
                     mScreenshotSmartActions.getSmartActionsFuture(
                             mScreenshotId, uri, image, mSmartActionsProvider,
                             ScreenshotSmartActionType.REGULAR_SMART_ACTIONS,
-                            smartActionsEnabled, user);
+                            smartActionsEnabled, mParams.owner);
             List<Notification.Action> smartActions = new ArrayList<>();
             if (smartActionsEnabled) {
                 int timeoutMs = DeviceConfig.getInt(
@@ -178,7 +174,7 @@ class SaveImageInBackgroundTask extends AsyncTask<String, Void, Void> {
             }
 
             mImageData.uri = uri;
-            mImageData.owner = user;
+            mImageData.owner = mParams.owner;
             mImageData.smartActions = smartActions;
             mImageData.viewTransition = createViewAction(mContext, mContext.getResources(), uri,
                     smartActionsEnabled);
@@ -190,7 +186,7 @@ class SaveImageInBackgroundTask extends AsyncTask<String, Void, Void> {
                     smartActionsEnabled);
             mImageData.quickShareAction = createQuickShareAction(
                     mQuickShareData.quickShareAction, mScreenshotId, uri, mImageTime, image,
-                    user);
+                    mParams.owner);
             mImageData.subject = getSubjectString(mImageTime);
 
             mParams.mActionsReadyListener.onActionsReady(mImageData);
@@ -203,9 +199,7 @@ class SaveImageInBackgroundTask extends AsyncTask<String, Void, Void> {
         } catch (Exception e) {
             // IOException/UnsupportedOperationException may be thrown if external storage is
             // not mounted
-            if (DEBUG_STORAGE) {
-                Log.d(TAG, "Failed to store screenshot", e);
-            }
+            Log.d(TAG, "Failed to store screenshot", e);
             mParams.clearImage();
             mImageData.reset();
             mQuickShareData.reset();

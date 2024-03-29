@@ -18,13 +18,16 @@ package com.android.systemui.statusbar.notification.dagger;
 
 import android.content.Context;
 
-import com.android.systemui.R;
+import com.android.internal.jank.InteractionJankMonitor;
+import com.android.systemui.CoreStartable;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.UiBackground;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
-import com.android.systemui.shade.ShadeEventsModule;
-import com.android.systemui.shade.ShadeExpansionStateManager;
+import com.android.systemui.res.R;
+import com.android.systemui.scene.domain.interactor.WindowRootViewVisibilityInteractor;
 import com.android.systemui.statusbar.NotificationListener;
+import com.android.systemui.statusbar.notification.NotificationActivityStarter;
+import com.android.systemui.statusbar.notification.NotificationLaunchAnimatorControllerProvider;
 import com.android.systemui.statusbar.notification.VisibilityLocationProvider;
 import com.android.systemui.statusbar.notification.collection.NotifInflaterImpl;
 import com.android.systemui.statusbar.notification.collection.NotifLiveDataStore;
@@ -38,8 +41,9 @@ import com.android.systemui.statusbar.notification.collection.inflation.BindEven
 import com.android.systemui.statusbar.notification.collection.inflation.NotifInflater;
 import com.android.systemui.statusbar.notification.collection.inflation.OnUserInteractionCallbackImpl;
 import com.android.systemui.statusbar.notification.collection.notifcollection.CommonNotifCollection;
+import com.android.systemui.statusbar.notification.collection.provider.NotificationDismissibilityProvider;
+import com.android.systemui.statusbar.notification.collection.provider.NotificationDismissibilityProviderImpl;
 import com.android.systemui.statusbar.notification.collection.provider.NotificationVisibilityProviderImpl;
-import com.android.systemui.statusbar.notification.collection.provider.SeenNotificationsProviderModule;
 import com.android.systemui.statusbar.notification.collection.provider.VisibilityLocationProviderDelegator;
 import com.android.systemui.statusbar.notification.collection.render.GroupExpansionManager;
 import com.android.systemui.statusbar.notification.collection.render.GroupExpansionManagerImpl;
@@ -48,6 +52,9 @@ import com.android.systemui.statusbar.notification.collection.render.GroupMember
 import com.android.systemui.statusbar.notification.collection.render.NotifGutsViewManager;
 import com.android.systemui.statusbar.notification.collection.render.NotifShadeEventSource;
 import com.android.systemui.statusbar.notification.collection.render.NotificationVisibilityProvider;
+import com.android.systemui.statusbar.notification.data.NotificationDataLayerModule;
+import com.android.systemui.statusbar.notification.domain.interactor.NotificationLaunchAnimationInteractor;
+import com.android.systemui.statusbar.notification.footer.ui.viewmodel.FooterViewModelModule;
 import com.android.systemui.statusbar.notification.icon.ConversationIconManager;
 import com.android.systemui.statusbar.notification.icon.IconManager;
 import com.android.systemui.statusbar.notification.init.NotificationsController;
@@ -56,33 +63,47 @@ import com.android.systemui.statusbar.notification.init.NotificationsControllerS
 import com.android.systemui.statusbar.notification.interruption.KeyguardNotificationVisibilityProviderModule;
 import com.android.systemui.statusbar.notification.interruption.NotificationInterruptStateProvider;
 import com.android.systemui.statusbar.notification.interruption.NotificationInterruptStateProviderImpl;
+import com.android.systemui.statusbar.notification.interruption.NotificationInterruptStateProviderWrapper;
+import com.android.systemui.statusbar.notification.interruption.VisualInterruptionDecisionProvider;
+import com.android.systemui.statusbar.notification.interruption.VisualInterruptionDecisionProviderImpl;
+import com.android.systemui.statusbar.notification.interruption.VisualInterruptionRefactor;
 import com.android.systemui.statusbar.notification.logging.NotificationLogger;
 import com.android.systemui.statusbar.notification.logging.NotificationPanelLogger;
 import com.android.systemui.statusbar.notification.logging.NotificationPanelLoggerImpl;
 import com.android.systemui.statusbar.notification.row.NotificationGutsManager;
 import com.android.systemui.statusbar.notification.row.OnUserInteractionCallback;
+import com.android.systemui.statusbar.notification.row.ui.viewmodel.ActivatableNotificationViewModelModule;
+import com.android.systemui.statusbar.notification.stack.NotificationListContainer;
 import com.android.systemui.statusbar.notification.stack.NotificationSectionsManager;
+import com.android.systemui.statusbar.notification.stack.NotificationStackScrollLayoutController;
 import com.android.systemui.statusbar.notification.stack.StackScrollAlgorithm;
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
-
-import java.util.concurrent.Executor;
-
-import javax.inject.Provider;
+import com.android.systemui.statusbar.phone.StatusBarNotificationActivityStarter;
+import com.android.systemui.statusbar.policy.HeadsUpManager;
+import com.android.systemui.util.kotlin.JavaAdapter;
 
 import dagger.Binds;
 import dagger.Module;
 import dagger.Provides;
+import dagger.multibindings.ClassKey;
+import dagger.multibindings.IntoMap;
+
+import java.util.concurrent.Executor;
+
+import javax.inject.Provider;
 
 /**
  * Dagger Module for classes found within the com.android.systemui.statusbar.notification package.
  */
 @Module(includes = {
         CoordinatorsModule.class,
+        FooterViewModelModule.class,
         KeyguardNotificationVisibilityProviderModule.class,
-        SeenNotificationsProviderModule.class,
-        ShadeEventsModule.class,
+        NotificationDataLayerModule.class,
         NotifPipelineChoreographerModule.class,
         NotificationSectionHeadersModule.class,
+        ActivatableNotificationViewModelModule.class,
+        NotificationMemoryModule.class,
 })
 public interface NotificationsModule {
     @Binds
@@ -94,6 +115,13 @@ public interface NotificationsModule {
     /** Provides an instance of {@link NotifGutsViewManager} */
     @Binds
     NotifGutsViewManager bindNotifGutsViewManager(NotificationGutsManager notificationGutsManager);
+
+    /** Binds {@link NotificationGutsManager} as a {@link CoreStartable}. */
+    @Binds
+    @IntoMap
+    @ClassKey(NotificationGutsManager.class)
+    CoreStartable bindsNotificationGutsManager(NotificationGutsManager notificationGutsManager);
+
 
     /** Provides an instance of {@link VisibilityLocationProvider} */
     @Binds
@@ -110,7 +138,8 @@ public interface NotificationsModule {
             NotificationVisibilityProvider visibilityProvider,
             NotifPipeline notifPipeline,
             StatusBarStateController statusBarStateController,
-            ShadeExpansionStateManager shadeExpansionStateManager,
+            WindowRootViewVisibilityInteractor windowRootViewVisibilityInteractor,
+            JavaAdapter javaAdapter,
             NotificationLogger.ExpansionStateLogger expansionStateLogger,
             NotificationPanelLogger notificationPanelLogger) {
         return new NotificationLogger(
@@ -120,10 +149,17 @@ public interface NotificationsModule {
                 visibilityProvider,
                 notifPipeline,
                 statusBarStateController,
-                shadeExpansionStateManager,
+                windowRootViewVisibilityInteractor,
+                javaAdapter,
                 expansionStateLogger,
                 notificationPanelLogger);
     }
+
+    /** Binds {@link NotificationLogger} as a {@link CoreStartable}. */
+    @Binds
+    @IntoMap
+    @ClassKey(NotificationLogger.class)
+    CoreStartable bindsNotificationLogger(NotificationLogger notificationLogger);
 
     /** Provides an instance of {@link NotificationPanelLogger} */
     @SysUISingleton
@@ -133,15 +169,16 @@ public interface NotificationsModule {
     }
 
     /** Provides an instance of {@link GroupMembershipManager} */
-    @SysUISingleton
-    @Provides
-    static GroupMembershipManager provideGroupMembershipManager() {
-        return new GroupMembershipManagerImpl();
-    }
+    @Binds
+    GroupMembershipManager provideGroupMembershipManager(GroupMembershipManagerImpl impl);
 
     /** Provides an instance of {@link GroupExpansionManager} */
     @Binds
     GroupExpansionManager provideGroupExpansionManager(GroupExpansionManagerImpl impl);
+
+    /** Provides an instance of {@link NotificationActivityStarter}. */
+    @Binds
+    NotificationActivityStarter bindActivityStarter(StatusBarNotificationActivityStarter impl);
 
     /** Initializes the notification data pipeline (can be disabled via config). */
     @SysUISingleton
@@ -157,11 +194,41 @@ public interface NotificationsModule {
         }
     }
 
+    /** Provides the container for the notification list. */
+    @Provides
+    @SysUISingleton
+    static NotificationListContainer provideListContainer(
+            NotificationStackScrollLayoutController nsslController) {
+        return nsslController.getNotificationListContainer();
+    }
+
+    /** Provides notification launch animator. */
+    @Provides
+    @SysUISingleton
+    static NotificationLaunchAnimatorControllerProvider provideNotifLaunchAnimControllerProvider(
+            NotificationLaunchAnimationInteractor notificationLaunchAnimationInteractor,
+            NotificationListContainer notificationListContainer,
+            HeadsUpManager headsUpManager,
+            InteractionJankMonitor jankMonitor) {
+        return new NotificationLaunchAnimatorControllerProvider(
+                notificationLaunchAnimationInteractor,
+                notificationListContainer,
+                headsUpManager,
+                jankMonitor);
+    }
+
     /**
      * Provide the active notification collection managing the notifications to render.
      */
     @Binds
     CommonNotifCollection provideCommonNotifCollection(NotifPipeline pipeline);
+
+    /**
+     * Provide the object which can be used to obtain dismissibility of a Notification.
+     */
+    @Binds
+    NotificationDismissibilityProvider provideNotificationDismissibilityProvider(
+            NotificationDismissibilityProviderImpl impl);
 
     /**
      * Provide the object which can be used to obtain NotificationVisibility objects.
@@ -203,4 +270,24 @@ public interface NotificationsModule {
     /** */
     @Binds
     NotifLiveDataStore bindNotifLiveDataStore(NotifLiveDataStoreImpl notifLiveDataStoreImpl);
+
+    /** */
+    @Provides
+    @SysUISingleton
+    static VisualInterruptionDecisionProvider provideVisualInterruptionDecisionProvider(
+            Provider<NotificationInterruptStateProviderImpl> oldImplProvider,
+            Provider<VisualInterruptionDecisionProviderImpl> newImplProvider) {
+        if (VisualInterruptionRefactor.isEnabled()) {
+            return newImplProvider.get();
+        } else {
+            return new NotificationInterruptStateProviderWrapper(oldImplProvider.get());
+        }
+    }
+
+    /** */
+    @Binds
+    @IntoMap
+    @ClassKey(VisualInterruptionDecisionProvider.class)
+    CoreStartable startVisualInterruptionDecisionProvider(
+            VisualInterruptionDecisionProvider provider);
 }

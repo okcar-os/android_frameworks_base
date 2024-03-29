@@ -23,8 +23,8 @@ import android.testing.AndroidTestingRunner
 import android.testing.TestableLooper
 import androidx.test.filters.SmallTest
 import androidx.test.rule.ActivityTestRule
-import androidx.test.runner.intercepting.SingleActivityFactory
 import com.android.systemui.SysuiTestCase
+import com.android.systemui.activity.SingleActivityFactory
 import com.android.systemui.broadcast.BroadcastDispatcher
 import com.android.systemui.controls.settings.ControlsSettingsDialogManager
 import com.android.systemui.flags.FeatureFlags
@@ -34,6 +34,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.mockito.Mock
+import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.MockitoAnnotations
 
@@ -52,23 +53,18 @@ class ControlsActivityTest : SysuiTestCase() {
     @JvmField
     var activityRule =
         ActivityTestRule(
-            object :
-                SingleActivityFactory<TestableControlsActivity>(
-                    TestableControlsActivity::class.java
-                ) {
-                override fun create(intent: Intent?): TestableControlsActivity {
-                    return TestableControlsActivity(
-                        uiController,
-                        broadcastDispatcher,
-                        dreamManager,
-                        featureFlags,
-                        controlsSettingsDialogManager,
-                        keyguardStateController,
-                    )
-                }
+            /* activityFactory= */ SingleActivityFactory {
+                TestableControlsActivity(
+                    uiController,
+                    broadcastDispatcher,
+                    dreamManager,
+                    featureFlags,
+                    controlsSettingsDialogManager,
+                    keyguardStateController,
+                )
             },
-            false,
-            false
+            /* initialTouchMode= */ false,
+            /* launchActivity= */ false,
         )
 
     @Before
@@ -106,6 +102,18 @@ class ControlsActivityTest : SysuiTestCase() {
         activityRule.runOnUiThread { activityRule.activity.onConfigurationChanged(newConfig) }
 
         verify(uiController).onSizeChange()
+    }
+
+    @Test
+    fun testConfigurationChangeSupportsInPlaceChange() {
+        val config = Configuration(activityRule.activity.resources.configuration)
+
+        config.orientation = switchOrientation(config.orientation)
+        activityRule.runOnUiThread { activityRule.activity.onConfigurationChanged(config) }
+        config.orientation = switchOrientation(config.orientation)
+        activityRule.runOnUiThread { activityRule.activity.onConfigurationChanged(config) }
+
+        verify(uiController, times(2)).onSizeChange()
     }
 
     private fun switchOrientation(orientation: Int): Int {

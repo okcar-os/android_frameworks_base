@@ -17,6 +17,7 @@
 package com.android.systemui.classifier;
 
 
+import static com.android.systemui.classifier.Classifier.ALTERNATE_BOUNCER_SWIPE;
 import static com.android.systemui.classifier.Classifier.BOUNCER_UNLOCK;
 import static com.android.systemui.classifier.Classifier.BRIGHTNESS_SLIDER;
 import static com.android.systemui.classifier.Classifier.LEFT_AFFORDANCE;
@@ -47,8 +48,7 @@ public class TypeClassifier extends FalsingClassifier {
     Result calculateFalsingResult(
             @Classifier.InteractionType int interactionType,
             double historyBelief, double historyConfidence) {
-        if (interactionType == Classifier.UDFPS_AUTHENTICATION
-                || interactionType == Classifier.LOCK_ICON) {
+        if (interactionType == Classifier.UDFPS_AUTHENTICATION) {
             return Result.passed(0);
         }
 
@@ -74,6 +74,7 @@ public class TypeClassifier extends FalsingClassifier {
             case NOTIFICATION_DISMISS:
                 wrongDirection = vertical;
                 break;
+            case ALTERNATE_BOUNCER_SWIPE:
             case UNLOCK:
             case BOUNCER_UNLOCK:
                 wrongDirection = !vertical || !up;

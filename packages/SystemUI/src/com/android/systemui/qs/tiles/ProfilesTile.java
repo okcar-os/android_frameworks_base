@@ -50,6 +50,7 @@ import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.qs.QSTile.State;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.qs.QSHost;
+import com.android.systemui.qs.QsEventLogger;
 import com.android.systemui.qs.logging.QSLogger;
 import com.android.systemui.qs.tileimpl.QSTileImpl;
 import com.android.systemui.R;
@@ -91,6 +92,7 @@ public class ProfilesTile extends QSTileImpl<State> {
     @Inject
     public ProfilesTile(
             QSHost host,
+            QsEventLogger uiEventLogger,
             @Background Looper backgroundLooper,
             @Main Handler mainHandler,
             FalsingManager falsingManager,
@@ -102,7 +104,7 @@ public class ProfilesTile extends QSTileImpl<State> {
             KeyguardDismissUtil keyguardDismissUtil,
             KeyguardStateController keyguardStateController
     ) {
-        super(host, backgroundLooper, mainHandler, falsingManager, metricsLogger,
+        super(host, uiEventLogger, backgroundLooper, mainHandler, falsingManager, metricsLogger,
                 statusBarStateController, activityStarter, qsLogger);
         mActivityStarter = activityStarter;
         mDialogLaunchAnimator = dialogLaunchAnimator;
@@ -282,7 +284,7 @@ public class ProfilesTile extends QSTileImpl<State> {
             window.addPrivateFlags(WindowManager.LayoutParams.SYSTEM_FLAG_SHOW_FOR_ALL_USERS);
 
             window.setGravity(Gravity.CENTER);
-            setTitle(R.string.screenrecord_name);
+            setTitle(R.string.quick_settings_profiles_label);
 
             setContentView(R.layout.profiles_dialog);
 

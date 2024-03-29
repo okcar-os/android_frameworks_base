@@ -19,6 +19,8 @@ package com.android.systemui.statusbar.policy;
 import android.annotation.NonNull;
 import android.content.Context;
 import android.content.res.Resources;
+import android.database.ContentObserver;
+import android.net.Uri;
 import android.os.UserHandle;
 import android.provider.Settings;
 import android.util.ArraySet;
@@ -28,14 +30,15 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.ImageView;
 
-import com.android.systemui.Dependency;
-import com.android.systemui.R;
+import com.android.systemui.res.R;
 import com.android.systemui.settings.brightness.BrightnessSliderController;
 import com.android.systemui.settings.brightness.ToggleSlider;
-import com.android.systemui.shade.NotificationPanelViewController;
 import com.android.systemui.shade.NotificationShadeWindowView;
+import com.android.systemui.shade.ShadeViewController;
 import com.android.systemui.statusbar.NotificationShadeDepthController;
 import com.android.systemui.tuner.TunerService;
+
+import lineageos.providers.LineageSettings;
 
 import lineageos.providers.LineageSettings;
 
@@ -53,7 +56,7 @@ public class BrightnessMirrorController
 
     private final NotificationShadeWindowView mStatusBarWindow;
     private final Consumer<Boolean> mVisibilityCallback;
-    private final NotificationPanelViewController mNotificationPanel;
+    private final ShadeViewController mNotificationPanel;
     private final NotificationShadeDepthController mDepthController;
     private final ArraySet<BrightnessMirrorListener> mBrightnessMirrorListeners = new ArraySet<>();
     private final BrightnessSliderController.Factory mToggleSliderFactory;
@@ -67,7 +70,7 @@ public class BrightnessMirrorController
     private ImageView mIcon;
 
     public BrightnessMirrorController(NotificationShadeWindowView statusBarWindow,
-            NotificationPanelViewController notificationPanelViewController,
+            ShadeViewController shadeViewController,
             NotificationShadeDepthController notificationShadeDepthController,
             BrightnessSliderController.Factory factory,
             @NonNull Consumer<Boolean> visibilityCallback) {
@@ -75,37 +78,44 @@ public class BrightnessMirrorController
         mToggleSliderFactory = factory;
         mBrightnessMirror = statusBarWindow.findViewById(R.id.brightness_mirror_container);
         mToggleSliderController = setMirrorLayout();
-        mNotificationPanel = notificationPanelViewController;
+        mNotificationPanel = shadeViewController;
         mDepthController = notificationShadeDepthController;
-        mNotificationPanel.setPanelAlphaEndAction(() -> {
+        mNotificationPanel.setAlphaChangeAnimationEndAction(() -> {
             mBrightnessMirror.setVisibility(View.INVISIBLE);
         });
         mVisibilityCallback = visibilityCallback;
         updateResources();
 
-        TunerService.Tunable tunable = (key, newValue) -> {
-            if (QS_SHOW_AUTO_BRIGHTNESS.equals(key)) {
-                mShouldShowAutoBrightness = TunerService.parseIntegerSwitch(newValue, true);
-                updateIcon();
-            }
-        };
-        Dependency.get(TunerService.class).addTunable(tunable, QS_SHOW_AUTO_BRIGHTNESS);
-
         mIsAutomaticBrightnessAvailable = mBrightnessMirror.getContext().getResources().getBoolean(
                 com.android.internal.R.bool.config_automatic_brightness_available);
+        mShouldShowAutoBrightness = LineageSettings.Secure.getInt(
+                mBrightnessMirror.getContext().getContentResolver(),
+                LineageSettings.Secure.QS_SHOW_AUTO_BRIGHTNESS, 0) != 0;
+        updateIcon();
+        mBrightnessMirror.getContext().getContentResolver().registerContentObserver(
+                LineageSettings.Secure.getUriFor(LineageSettings.Secure.QS_SHOW_AUTO_BRIGHTNESS),
+                false, new ContentObserver(null) {
+                    @Override
+                    public void onChange(boolean selfChange) {
+                        mShouldShowAutoBrightness = LineageSettings.Secure.getInt(
+                                mBrightnessMirror.getContext().getContentResolver(),
+                                LineageSettings.Secure.QS_SHOW_AUTO_BRIGHTNESS, 0) != 0;
+                        updateIcon();
+                    }
+                });
     }
 
     public void showMirror() {
         mBrightnessMirror.setVisibility(View.VISIBLE);
         mVisibilityCallback.accept(true);
-        mNotificationPanel.setPanelAlpha(0, true /* animate */);
+        mNotificationPanel.setAlpha(0, true /* animate */);
         mDepthController.setBrightnessMirrorVisible(true);
         updateIcon();
     }
 
     public void hideMirror() {
         mVisibilityCallback.accept(false);
-        mNotificationPanel.setPanelAlpha(255, true /* animate */);
+        mNotificationPanel.setAlpha(255, true /* animate */);
         mDepthController.setBrightnessMirrorVisible(false);
     }
 

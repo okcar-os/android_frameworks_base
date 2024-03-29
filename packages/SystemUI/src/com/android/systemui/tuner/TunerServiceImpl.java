@@ -39,7 +39,7 @@ import androidx.annotation.WorkerThread;
 
 import com.android.internal.util.ArrayUtils;
 import com.android.systemui.DejankUtils;
-import com.android.systemui.R;
+import com.android.systemui.res.R;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.demomode.DemoModeController;
@@ -59,7 +59,11 @@ import javax.inject.Inject;
 
 
 /**
+ * @deprecated Don't use this class to listen to Secure Settings. Use {@code SecureSettings} instead
+ * or {@code SettingsObserver} to be able to specify the handler.
+ * This class will interact with SecureSettings using the main looper.
  */
+@Deprecated
 @SysUISingleton
 public class TunerServiceImpl extends TunerService {
 

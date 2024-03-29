@@ -16,11 +16,15 @@
 
 package com.android.systemui.shade;
 
+import static androidx.constraintlayout.core.widgets.Optimizer.OPTIMIZATION_GRAPH;
+
 import android.app.Fragment;
 import android.content.Context;
 import android.content.res.Configuration;
 import android.graphics.Canvas;
+import android.graphics.Rect;
 import android.util.AttributeSet;
+import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowInsets;
 
@@ -28,7 +32,8 @@ import androidx.annotation.Nullable;
 import androidx.constraintlayout.widget.ConstraintLayout;
 import androidx.constraintlayout.widget.ConstraintSet;
 
-import com.android.systemui.R;
+import com.android.systemui.keyguard.shared.KeyguardShadeMigrationNssl;
+import com.android.systemui.res.R;
 import com.android.systemui.fragments.FragmentHostManager.FragmentListener;
 import com.android.systemui.plugins.qs.QS;
 import com.android.systemui.statusbar.notification.AboveShelfObserver;
@@ -56,6 +61,13 @@ public class NotificationsQuickSettingsContainer extends ConstraintLayout
     private View mQSContainer;
     private int mLastQSPaddingBottom;
 
+    /**
+     *  These are used to compute the bounding box containing the shade and the notification scrim,
+     *  which is then used to drive the Back gesture animation.
+     */
+    private final Rect mUpperRect = new Rect();
+    private final Rect mBoundingBoxRect = new Rect();
+
     @Nullable
     private Consumer<Configuration> mConfigurationChangedListener;
 
@@ -67,8 +79,11 @@ public class NotificationsQuickSettingsContainer extends ConstraintLayout
     protected void onFinishInflate() {
         super.onFinishInflate();
         mQsFrame = findViewById(R.id.qs_frame);
-        mStackScroller = findViewById(R.id.notification_stack_scroller);
         mKeyguardStatusBar = findViewById(R.id.keyguard_header);
+    }
+
+    void setStackScroller(View stackScroller) {
+        mStackScroller = stackScroller;
     }
 
     @Override
@@ -100,7 +115,7 @@ public class NotificationsQuickSettingsContainer extends ConstraintLayout
     }
 
     public void setNotificationsMarginBottom(int margin) {
-        LayoutParams params = (LayoutParams) mStackScroller.getLayoutParams();
+        MarginLayoutParams params = (MarginLayoutParams) mStackScroller.getLayoutParams();
         params.bottomMargin = margin;
         mStackScroller.setLayoutParams(params);
     }
@@ -165,8 +180,21 @@ public class NotificationsQuickSettingsContainer extends ConstraintLayout
         super.dispatchDraw(canvas);
     }
 
+    void enableGraphOptimization() {
+        setOptimizationLevel(getOptimizationLevel() | OPTIMIZATION_GRAPH);
+    }
+
+    @Override
+    public boolean dispatchTouchEvent(MotionEvent ev) {
+        return TouchLogger.logDispatchTouch("NotificationsQuickSettingsContainer", ev,
+                super.dispatchTouchEvent(ev));
+    }
+
     @Override
     protected boolean drawChild(Canvas canvas, View child, long drawingTime) {
+        if (KeyguardShadeMigrationNssl.isEnabled()) {
+            return super.drawChild(canvas, child, drawingTime);
+        }
         int layoutIndex = mLayoutDrawingOrder.indexOf(child);
         if (layoutIndex >= 0) {
             return super.drawChild(canvas, mDrawingOrderedChildren.get(layoutIndex), drawingTime);
@@ -177,5 +205,38 @@ public class NotificationsQuickSettingsContainer extends ConstraintLayout
 
     public void applyConstraints(ConstraintSet constraintSet) {
         constraintSet.applyTo(this);
+    }
+
+    /**
+     *  Scale multiple elements in tandem, for the predictive back animation.
+     *  This is how the Shade responds to the Back gesture (by scaling).
+     *  Without the common center, individual elements will scale about their respective centers.
+     *  Scaling the entire NotificationsQuickSettingsContainer will also resize the shade header
+     *  (which we don't want).
+     */
+    public void applyBackScaling(float scale, boolean usingSplitShade) {
+        if (mStackScroller == null || mQSContainer == null) {
+            return;
+        }
+
+        mQSContainer.getBoundsOnScreen(mUpperRect);
+        mStackScroller.getBoundsOnScreen(mBoundingBoxRect);
+        mBoundingBoxRect.union(mUpperRect);
+
+        float cx = mBoundingBoxRect.centerX();
+        float cy = mBoundingBoxRect.centerY();
+
+        mQSContainer.setPivotX(cx);
+        mQSContainer.setPivotY(cy);
+        mQSContainer.setScaleX(scale);
+        mQSContainer.setScaleY(scale);
+
+        // When in large-screen split-shade mode, the notification stack scroller scales correctly
+        // only if the pivot point is at the left edge of the screen (because of its dimensions).
+        // When not in large-screen split-shade mode, we can scale correctly via the (cx,cy) above.
+        mStackScroller.setPivotX(usingSplitShade ? 0.0f : cx);
+        mStackScroller.setPivotY(cy);
+        mStackScroller.setScaleX(scale);
+        mStackScroller.setScaleY(scale);
     }
 }

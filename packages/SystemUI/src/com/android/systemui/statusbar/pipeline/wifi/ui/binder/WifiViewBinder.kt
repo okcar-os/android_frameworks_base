@@ -23,20 +23,18 @@ import android.widget.ImageView
 import androidx.core.view.isVisible
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
-import com.android.systemui.R
 import com.android.systemui.common.ui.binder.IconViewBinder
 import com.android.systemui.lifecycle.repeatWhenAttached
+import com.android.systemui.res.R
 import com.android.systemui.statusbar.StatusBarIconView
-import com.android.systemui.statusbar.StatusBarIconView.STATE_DOT
 import com.android.systemui.statusbar.StatusBarIconView.STATE_HIDDEN
-import com.android.systemui.statusbar.StatusBarIconView.STATE_ICON
 import com.android.systemui.statusbar.pipeline.shared.ui.binder.ModernStatusBarViewBinding
+import com.android.systemui.statusbar.pipeline.shared.ui.binder.ModernStatusBarViewVisibilityHelper
 import com.android.systemui.statusbar.pipeline.wifi.ui.model.WifiIcon
 import com.android.systemui.statusbar.pipeline.wifi.ui.viewmodel.LocationBasedWifiViewModel
 import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 
@@ -64,6 +62,7 @@ object WifiViewBinder {
         val activityOutView = view.requireViewById<ImageView>(R.id.wifi_out)
         val activityContainerView = view.requireViewById<View>(R.id.inout_container)
         val airplaneSpacer = view.requireViewById<View>(R.id.wifi_airplane_spacer)
+        val signalSpacer = view.requireViewById<View>(R.id.wifi_signal_spacer)
 
         view.isVisible = true
         iconView.isVisible = true
@@ -83,8 +82,18 @@ object WifiViewBinder {
 
                 launch {
                     visibilityState.collect { visibilityState ->
-                        groupView.isVisible = visibilityState == STATE_ICON
-                        dotView.isVisible = visibilityState == STATE_DOT
+                        // for b/296864006, we can not hide all the child views if visibilityState
+                        // is STATE_HIDDEN. Because hiding all child views would cause the
+                        // getWidth() of this view return 0, and that would cause the translation
+                        // calculation fails in StatusIconContainer. Therefore, like class
+                        // MobileIconBinder, instead of set the child views visibility to View.GONE,
+                        // we set their visibility to View.INVISIBLE to make them invisible but
+                        // keep the width.
+                        ModernStatusBarViewVisibilityHelper.setVisibilityState(
+                            visibilityState,
+                            groupView,
+                            dotView,
+                        )
                     }
                 }
 
@@ -133,6 +142,12 @@ object WifiViewBinder {
                     }
                 }
 
+                launch {
+                    viewModel.isSignalSpacerVisible.distinctUntilChanged().collect { visible ->
+                        signalSpacer.isVisible = visible
+                    }
+                }
+
                 try {
                     awaitCancellation()
                 } finally {
@@ -150,17 +165,11 @@ object WifiViewBinder {
                 visibilityState.value = state
             }
 
-            override fun onIconTintChanged(newTint: Int) {
-                if (viewModel.useDebugColoring) {
-                    return
-                }
+            override fun onIconTintChanged(newTint: Int, contrastTint: Int /* unused */) {
                 iconTint.value = newTint
             }
 
             override fun onDecorTintChanged(newTint: Int) {
-                if (viewModel.useDebugColoring) {
-                    return
-                }
                 decorTint.value = newTint
             }
 

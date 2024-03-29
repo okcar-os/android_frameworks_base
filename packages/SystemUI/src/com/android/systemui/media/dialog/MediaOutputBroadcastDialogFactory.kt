@@ -29,8 +29,8 @@ import com.android.systemui.broadcast.BroadcastSender
 import com.android.systemui.flags.FeatureFlags
 import com.android.systemui.media.nearby.NearbyMediaDevicesManager
 import com.android.systemui.plugins.ActivityStarter
+import com.android.systemui.settings.UserTracker
 import com.android.systemui.statusbar.notification.collection.notifcollection.CommonNotifCollection
-import java.util.Optional
 import javax.inject.Inject
 
 /**
@@ -45,11 +45,12 @@ class MediaOutputBroadcastDialogFactory @Inject constructor(
     private val notifCollection: CommonNotifCollection,
     private val uiEventLogger: UiEventLogger,
     private val dialogLaunchAnimator: DialogLaunchAnimator,
-    private val nearbyMediaDevicesManagerOptional: Optional<NearbyMediaDevicesManager>,
+    private val nearbyMediaDevicesManager: NearbyMediaDevicesManager,
     private val audioManager: AudioManager,
     private val powerExemptionManager: PowerExemptionManager,
     private val keyGuardManager: KeyguardManager,
-    private val featureFlags: FeatureFlags
+    private val featureFlags: FeatureFlags,
+    private val userTracker: UserTracker
 ) {
     var mediaOutputBroadcastDialog: MediaOutputBroadcastDialog? = null
 
@@ -60,8 +61,8 @@ class MediaOutputBroadcastDialogFactory @Inject constructor(
 
         val controller = MediaOutputController(context, packageName,
                 mediaSessionManager, lbm, starter, notifCollection,
-                dialogLaunchAnimator, nearbyMediaDevicesManagerOptional, audioManager,
-                powerExemptionManager, keyGuardManager, featureFlags)
+                dialogLaunchAnimator, nearbyMediaDevicesManager, audioManager,
+                powerExemptionManager, keyGuardManager, featureFlags, userTracker)
         val dialog =
                 MediaOutputBroadcastDialog(context, aboveStatusBar, broadcastSender, controller)
         mediaOutputBroadcastDialog = dialog

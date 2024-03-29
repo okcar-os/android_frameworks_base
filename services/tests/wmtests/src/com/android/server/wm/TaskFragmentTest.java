@@ -33,6 +33,8 @@ import static com.android.dx.mockito.inline.extended.ExtendedMockito.never;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.spyOn;
 import static com.android.dx.mockito.inline.extended.ExtendedMockito.verify;
 import static com.android.server.wm.ActivityRecord.State.RESUMED;
+import static com.android.server.wm.TaskFragment.EMBEDDED_DIM_AREA_PARENT_TASK;
+import static com.android.server.wm.TaskFragment.EMBEDDED_DIM_AREA_TASK_FRAGMENT;
 import static com.android.server.wm.TaskFragment.EMBEDDING_DISALLOWED_MIN_DIMENSION_VIOLATION;
 import static com.android.server.wm.TaskFragment.EMBEDDING_DISALLOWED_UNTRUSTED_HOST;
 import static com.android.server.wm.WindowContainer.POSITION_TOP;
@@ -46,11 +48,13 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.clearInvocations;
 
 import android.content.res.Configuration;
+import android.graphics.Color;
 import android.graphics.Rect;
 import android.os.Binder;
 import android.platform.test.annotations.Presubmit;
 import android.view.SurfaceControl;
 import android.window.ITaskFragmentOrganizer;
+import android.window.TaskFragmentAnimationParams;
 import android.window.TaskFragmentInfo;
 import android.window.TaskFragmentOrganizer;
 
@@ -123,18 +127,22 @@ public class TaskFragmentTest extends WindowTestsBase {
 
     @Test
     public void testShouldStartChangeTransition_relativePositionChange() {
+        final Task task = createTask(mDisplayContent, WINDOWING_MODE_MULTI_WINDOW,
+                ACTIVITY_TYPE_STANDARD);
+        task.setBoundsUnchecked(new Rect(0, 0, 1000, 1000));
+        mTaskFragment = createTaskFragmentWithEmbeddedActivity(task, mOrganizer);
         mockSurfaceFreezerSnapshot(mTaskFragment.mSurfaceFreezer);
         final Rect startBounds = new Rect(0, 0, 500, 1000);
         final Rect endBounds = new Rect(500, 0, 1000, 1000);
-        mTaskFragment.setBounds(startBounds);
-        mTaskFragment.updateRelativeEmbeddedBounds();
+        mTaskFragment.setRelativeEmbeddedBounds(startBounds);
+        mTaskFragment.recomputeConfiguration();
         doReturn(true).when(mTaskFragment).isVisible();
         doReturn(true).when(mTaskFragment).isVisibleRequested();
 
         // Do not resize, just change the relative position.
         final Rect relStartBounds = new Rect(mTaskFragment.getRelativeEmbeddedBounds());
-        mTaskFragment.setBounds(endBounds);
-        mTaskFragment.updateRelativeEmbeddedBounds();
+        mTaskFragment.setRelativeEmbeddedBounds(endBounds);
+        mTaskFragment.recomputeConfiguration();
         spyOn(mDisplayContent.mTransitionController);
 
         // For Shell transition, we don't want to take snapshot when the bounds are not resized
@@ -151,19 +159,26 @@ public class TaskFragmentTest extends WindowTestsBase {
 
     @Test
     public void testStartChangeTransition_resetSurface() {
+        final Task task = createTask(mDisplayContent, WINDOWING_MODE_MULTI_WINDOW,
+                ACTIVITY_TYPE_STANDARD);
+        task.setBoundsUnchecked(new Rect(0, 0, 1000, 1000));
+        mTaskFragment = createTaskFragmentWithEmbeddedActivity(task, mOrganizer);
+        doReturn(mTransaction).when(mTaskFragment).getSyncTransaction();
+        doReturn(mTransaction).when(mTaskFragment).getPendingTransaction();
+        mLeash = mTaskFragment.getSurfaceControl();
         mockSurfaceFreezerSnapshot(mTaskFragment.mSurfaceFreezer);
         final Rect startBounds = new Rect(0, 0, 1000, 1000);
         final Rect endBounds = new Rect(500, 500, 1000, 1000);
-        mTaskFragment.setBounds(startBounds);
-        mTaskFragment.updateRelativeEmbeddedBounds();
+        mTaskFragment.setRelativeEmbeddedBounds(startBounds);
+        mTaskFragment.recomputeConfiguration();
         doReturn(true).when(mTaskFragment).isVisible();
         doReturn(true).when(mTaskFragment).isVisibleRequested();
 
         clearInvocations(mTransaction);
         final Rect relStartBounds = new Rect(mTaskFragment.getRelativeEmbeddedBounds());
         mTaskFragment.deferOrganizedTaskFragmentSurfaceUpdate();
-        mTaskFragment.setBounds(endBounds);
-        mTaskFragment.updateRelativeEmbeddedBounds();
+        mTaskFragment.setRelativeEmbeddedBounds(endBounds);
+        mTaskFragment.recomputeConfiguration();
         assertTrue(mTaskFragment.shouldStartChangeTransition(startBounds, relStartBounds));
         mTaskFragment.initializeChangeTransition(startBounds);
         mTaskFragment.continueOrganizedTaskFragmentSurfaceUpdate();
@@ -202,8 +217,8 @@ public class TaskFragmentTest extends WindowTestsBase {
         mockSurfaceFreezerSnapshot(mTaskFragment.mSurfaceFreezer);
         final Rect startBounds = new Rect(0, 0, 1000, 1000);
         final Rect endBounds = new Rect(500, 500, 1000, 1000);
-        mTaskFragment.setBounds(startBounds);
-        mTaskFragment.updateRelativeEmbeddedBounds();
+        mTaskFragment.setRelativeEmbeddedBounds(startBounds);
+        mTaskFragment.recomputeConfiguration();
         doReturn(true).when(mTaskFragment).isVisible();
         doReturn(true).when(mTaskFragment).isVisibleRequested();
 
@@ -213,8 +228,8 @@ public class TaskFragmentTest extends WindowTestsBase {
 
         assertFalse(mTaskFragment.okToAnimate());
 
-        mTaskFragment.setBounds(endBounds);
-        mTaskFragment.updateRelativeEmbeddedBounds();
+        mTaskFragment.setRelativeEmbeddedBounds(endBounds);
+        mTaskFragment.recomputeConfiguration();
 
         assertFalse(mTaskFragment.shouldStartChangeTransition(startBounds, relStartBounds));
     }
@@ -265,10 +280,8 @@ public class TaskFragmentTest extends WindowTestsBase {
         final ActivityRecord bottomActivity = createActivityRecord(bottomTask);
         final Task topTask = createTask(mDisplayContent);
         // First create primary TF, and then secondary TF, so that the secondary will be on the top.
-        final TaskFragment primaryTf = createTaskFragmentWithParentTask(
-                topTask, false /* createEmbeddedTask */);
-        final TaskFragment secondaryTf = createTaskFragmentWithParentTask(
-                topTask, false /* createEmbeddedTask */);
+        final TaskFragment primaryTf = createTaskFragmentWithActivity(topTask);
+        final TaskFragment secondaryTf = createTaskFragmentWithActivity(topTask);
         final ActivityRecord primaryActivity = primaryTf.getTopMostActivity();
         final ActivityRecord secondaryActivity = secondaryTf.getTopMostActivity();
         doReturn(true).when(primaryActivity).supportsPictureInPicture();
@@ -291,35 +304,44 @@ public class TaskFragmentTest extends WindowTestsBase {
 
     @Test
     public void testEmbeddedTaskFragmentEnterPip_singleActivity_resetOrganizerOverrideConfig() {
-        final TaskFragment taskFragment = new TaskFragmentBuilder(mAtm)
-                .setOrganizer(mOrganizer)
-                .setFragmentToken(new Binder())
-                .setCreateParentTask()
-                .createActivityCount(1)
+        final Task task = createTask(mDisplayContent);
+        final TaskFragment taskFragment0 = createTaskFragmentWithEmbeddedActivity(task, mOrganizer);
+        final TaskFragment taskFragment1 = new TaskFragmentBuilder(mAtm)
+                .setParentTask(task)
                 .build();
-        final Task task = taskFragment.getTask();
-        final ActivityRecord activity = taskFragment.getTopMostActivity();
+        final ActivityRecord activity = taskFragment0.getTopMostActivity();
         final Rect taskFragmentBounds = new Rect(0, 0, 300, 1000);
         task.setWindowingMode(WINDOWING_MODE_FULLSCREEN);
-        taskFragment.setWindowingMode(WINDOWING_MODE_MULTI_WINDOW);
-        taskFragment.setBounds(taskFragmentBounds);
+        taskFragment0.setWindowingMode(WINDOWING_MODE_MULTI_WINDOW);
+        taskFragment0.setBounds(taskFragmentBounds);
+        taskFragment0.setAdjacentTaskFragment(taskFragment1);
+        taskFragment0.setCompanionTaskFragment(taskFragment1);
+        taskFragment0.setAnimationParams(new TaskFragmentAnimationParams.Builder()
+                .setAnimationBackgroundColor(Color.GREEN)
+                .build());
 
         assertEquals(taskFragmentBounds, activity.getBounds());
         assertEquals(WINDOWING_MODE_MULTI_WINDOW, activity.getWindowingMode());
+        assertEquals(taskFragment1, taskFragment0.getAdjacentTaskFragment());
+        assertEquals(taskFragment1, taskFragment0.getCompanionTaskFragment());
+        assertNotEquals(TaskFragmentAnimationParams.DEFAULT, taskFragment0.getAnimationParams());
 
         // Move activity to pinned root task.
         mRootWindowContainer.moveActivityToPinnedRootTask(activity,
                 null /* launchIntoPipHostActivity */, "test");
 
         // Ensure taskFragment requested config is reset.
-        assertEquals(taskFragment, activity.getOrganizedTaskFragment());
+        assertEquals(taskFragment0, activity.getOrganizedTaskFragment());
         assertEquals(task, activity.getTask());
         assertTrue(task.inPinnedWindowingMode());
-        assertTrue(taskFragment.inPinnedWindowingMode());
+        assertTrue(taskFragment0.inPinnedWindowingMode());
         final Rect taskBounds = task.getBounds();
-        assertEquals(taskBounds, taskFragment.getBounds());
+        assertEquals(taskBounds, taskFragment0.getBounds());
         assertEquals(taskBounds, activity.getBounds());
-        assertEquals(Configuration.EMPTY, taskFragment.getRequestedOverrideConfiguration());
+        assertEquals(Configuration.EMPTY, taskFragment0.getRequestedOverrideConfiguration());
+        assertNull(taskFragment0.getAdjacentTaskFragment());
+        assertNull(taskFragment0.getCompanionTaskFragment());
+        assertEquals(TaskFragmentAnimationParams.DEFAULT, taskFragment0.getAnimationParams());
         // Because the whole Task is entering PiP, no need to record for future reparent.
         assertNull(activity.mLastTaskFragmentOrganizerBeforePip);
     }
@@ -327,22 +349,12 @@ public class TaskFragmentTest extends WindowTestsBase {
     @Test
     public void testEmbeddedTaskFragmentEnterPip_multiActivities_notifyOrganizer() {
         final Task task = createTask(mDisplayContent);
-        final TaskFragment taskFragment0 = new TaskFragmentBuilder(mAtm)
-                .setParentTask(task)
-                .setOrganizer(mOrganizer)
-                .setFragmentToken(new Binder())
-                .createActivityCount(1)
-                .build();
-        final TaskFragment taskFragment1 = new TaskFragmentBuilder(mAtm)
-                .setParentTask(task)
-                .setOrganizer(mOrganizer)
-                .setFragmentToken(new Binder())
-                .createActivityCount(1)
-                .build();
+        final TaskFragment taskFragment0 = createTaskFragmentWithEmbeddedActivity(task, mOrganizer);
+        final TaskFragment taskFragment1 = createTaskFragmentWithEmbeddedActivity(task, mOrganizer);
         final ActivityRecord activity0 = taskFragment0.getTopMostActivity();
         final ActivityRecord activity1 = taskFragment1.getTopMostActivity();
-        activity0.setVisibility(true /* visible */, false /* deferHidingClient */);
-        activity1.setVisibility(true /* visible */, false /* deferHidingClient */);
+        activity0.setVisibility(true);
+        activity1.setVisibility(true);
         spyOn(mAtm.mTaskFragmentOrganizerController);
 
         // Move activity to pinned.
@@ -432,7 +444,7 @@ public class TaskFragmentTest extends WindowTestsBase {
         final Task rootTask = createTask(mDisplayContent, WINDOWING_MODE_MULTI_WINDOW,
                 ACTIVITY_TYPE_STANDARD);
         final Task leafTask0 = new TaskBuilder(mSupervisor)
-                .setParentTaskFragment(rootTask)
+                .setParentTask(rootTask)
                 .build();
         final TaskFragment organizedTf = new TaskFragmentBuilder(mAtm)
                 .createActivityCount(2)
@@ -468,7 +480,7 @@ public class TaskFragmentTest extends WindowTestsBase {
         // There is an activity in a different leaf task on top of activity0 and activity1.
         // None of the two has overlay over untrusted mode embedded because it is not the same Task.
         final Task leafTask1 = new TaskBuilder(mSupervisor)
-                .setParentTaskFragment(rootTask)
+                .setParentTask(rootTask)
                 .setOnTop(true)
                 .setCreateActivity(true)
                 .build();
@@ -576,13 +588,22 @@ public class TaskFragmentTest extends WindowTestsBase {
         // Making the activity0 be the focused activity and ensure the focused app is updated.
         activity0.moveFocusableActivityToTop("test");
         assertEquals(activity0, mDisplayContent.mFocusedApp);
+
+        // Moving activity1 to top and make both the two activities resumed.
+        activity1.moveFocusableActivityToTop("test");
+        activity0.setState(RESUMED, "test");
+        activity1.setState(RESUMED, "test");
+
+        // Verifies that the focus app can be updated to an Activity in the adjacent TF
+        mAtm.setFocusedTask(task.mTaskId, activity0);
+        assertEquals(activity0, mDisplayContent.mFocusedApp);
     }
 
     @Test
     public void testIsVisibleWithAdjacent_reportOrientationUnspecified() {
         final Task task = createTask(mDisplayContent);
-        final TaskFragment tf0 = createTaskFragmentWithParentTask(task);
-        final TaskFragment tf1 = createTaskFragmentWithParentTask(task);
+        final TaskFragment tf0 = createTaskFragmentWithActivity(task);
+        final TaskFragment tf1 = createTaskFragmentWithActivity(task);
         tf0.setAdjacentTaskFragment(tf1);
         tf0.setWindowingMode(WINDOWING_MODE_MULTI_WINDOW);
         tf1.setWindowingMode(WINDOWING_MODE_MULTI_WINDOW);
@@ -591,8 +612,8 @@ public class TaskFragmentTest extends WindowTestsBase {
         tf1.setBounds(600, 0, 1200, 1000);
         final ActivityRecord activity0 = tf0.getTopMostActivity();
         final ActivityRecord activity1 = tf1.getTopMostActivity();
-        doReturn(true).when(activity0).isVisibleRequested();
-        doReturn(true).when(activity1).isVisibleRequested();
+        activity0.setVisibleRequested(true);
+        activity1.setVisibleRequested(true);
 
         assertEquals(SCREEN_ORIENTATION_UNSPECIFIED, tf0.getOrientation(SCREEN_ORIENTATION_UNSET));
         assertEquals(SCREEN_ORIENTATION_UNSPECIFIED, tf1.getOrientation(SCREEN_ORIENTATION_UNSET));
@@ -633,5 +654,44 @@ public class TaskFragmentTest extends WindowTestsBase {
         // The ImeParent should be the display.
         assertEquals(mDisplayContent.getImeContainer().getParent().getSurfaceControl(),
                 mDisplayContent.computeImeParent());
+    }
+
+    @Test
+    public void testIsolatedNavigation() {
+        final Task task = createTask(mDisplayContent);
+        final TaskFragment tf0 = new TaskFragmentBuilder(mAtm)
+                .setParentTask(task)
+                .createActivityCount(1)
+                .setOrganizer(mOrganizer)
+                .setFragmentToken(new Binder())
+                .build();
+
+        // Cannot be isolated if not embedded.
+        task.setIsolatedNav(true);
+        assertFalse(task.isIsolatedNav());
+
+        // Ensure the TaskFragment is isolated once set.
+        tf0.setIsolatedNav(true);
+        assertTrue(tf0.isIsolatedNav());
+    }
+
+    @Test
+    public void testGetDimBounds() {
+        final Task task = mTaskFragment.getTask();
+        final Rect taskBounds = task.getBounds();
+        mTaskFragment.setBounds(taskBounds.left, taskBounds.top, taskBounds.left + 10,
+                taskBounds.top + 10);
+        final Rect taskFragmentBounds = mTaskFragment.getBounds();
+
+        // Return Task bounds if dimming on parent Task.
+        final Rect dimBounds = new Rect();
+        mTaskFragment.setEmbeddedDimArea(EMBEDDED_DIM_AREA_PARENT_TASK);
+        mTaskFragment.getDimBounds(dimBounds);
+        assertEquals(taskBounds, dimBounds);
+
+        // Return TF bounds by default.
+        mTaskFragment.setEmbeddedDimArea(EMBEDDED_DIM_AREA_TASK_FRAGMENT);
+        mTaskFragment.getDimBounds(dimBounds);
+        assertEquals(taskFragmentBounds, dimBounds);
     }
 }

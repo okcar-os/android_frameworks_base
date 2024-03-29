@@ -16,6 +16,7 @@
 
 package com.android.systemui.dreams.dagger;
 
+import android.annotation.Nullable;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.pm.PackageManager;
@@ -23,27 +24,23 @@ import android.content.res.Resources;
 
 import com.android.dream.lowlight.dagger.LowLightDreamModule;
 import com.android.settingslib.dream.DreamBackend;
-import com.android.systemui.R;
+import com.android.systemui.complication.dagger.RegisteredComplicationsModule;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.dreams.DreamOverlayNotificationCountProvider;
 import com.android.systemui.dreams.DreamOverlayService;
-import com.android.systemui.dreams.complication.dagger.RegisteredComplicationsModule;
+import com.android.systemui.dreams.complication.dagger.ComplicationComponent;
 import com.android.systemui.dreams.touch.scrim.dagger.ScrimModule;
-import com.android.systemui.process.condition.SystemProcessCondition;
-import com.android.systemui.shared.condition.Condition;
-import com.android.systemui.shared.condition.Monitor;
+import com.android.systemui.res.R;
+import com.android.systemui.touch.TouchInsetManager;
+
+import dagger.Module;
+import dagger.Provides;
 
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.Executor;
 
 import javax.inject.Named;
-
-import dagger.Binds;
-import dagger.Module;
-import dagger.Provides;
-import dagger.multibindings.IntoSet;
 
 /**
  * Dagger Module providing Dream-related functionality.
@@ -54,18 +51,17 @@ import dagger.multibindings.IntoSet;
             ScrimModule.class
         },
         subcomponents = {
+            ComplicationComponent.class,
             DreamOverlayComponent.class,
         })
 public interface DreamModule {
     String DREAM_ONLY_ENABLED_FOR_DOCK_USER = "dream_only_enabled_for_dock_user";
     String DREAM_OVERLAY_SERVICE_COMPONENT = "dream_overlay_service_component";
     String DREAM_OVERLAY_ENABLED = "dream_overlay_enabled";
-
+    String DREAM_TOUCH_INSET_MANAGER = "dream_touch_inset_manager";
     String DREAM_SUPPORTED = "dream_supported";
-    String DREAM_PRETEXT_CONDITIONS = "dream_pretext_conditions";
-    String DREAM_PRETEXT_MONITOR = "dream_prtext_monitor";
     String DREAM_OVERLAY_WINDOW_TITLE = "dream_overlay_window_title";
-
+    String HOME_CONTROL_PANEL_DREAM_COMPONENT = "home_control_panel_dream_component";
 
     /**
      * Provides the dream component
@@ -74,6 +70,30 @@ public interface DreamModule {
     @Named(DREAM_OVERLAY_SERVICE_COMPONENT)
     static ComponentName providesDreamOverlayService(Context context) {
         return new ComponentName(context, DreamOverlayService.class);
+    }
+
+    /**
+     * Provides the home control panel component
+     */
+    @Provides
+    @Nullable
+    @Named(HOME_CONTROL_PANEL_DREAM_COMPONENT)
+    static ComponentName providesHomeControlPanelComponent(Context context) {
+        final String homeControlPanelComponent = context.getResources()
+                .getString(R.string.config_homePanelDreamComponent);
+        if (homeControlPanelComponent.isEmpty()) {
+            return null;
+        }
+        return ComponentName.unflattenFromString(homeControlPanelComponent);
+    }
+
+    /**
+     * Provides a touch inset manager for dreams.
+     */
+    @Provides
+    @Named(DREAM_TOUCH_INSET_MANAGER)
+    static TouchInsetManager providesTouchInsetManager(@Main Executor executor) {
+        return new TouchInsetManager(executor);
     }
 
     /**
@@ -123,21 +143,6 @@ public interface DreamModule {
     @Named(DREAM_SUPPORTED)
     static boolean providesDreamSupported(@Main Resources resources) {
         return resources.getBoolean(com.android.internal.R.bool.config_dreamsSupported);
-    }
-
-    /** */
-    @Binds
-    @IntoSet
-    @Named(DREAM_PRETEXT_CONDITIONS)
-    Condition bindSystemProcessCondition(SystemProcessCondition condition);
-
-    /** */
-    @Provides
-    @Named(DREAM_PRETEXT_MONITOR)
-    static Monitor providesDockerPretextMonitor(
-            @Main Executor executor,
-            @Named(DREAM_PRETEXT_CONDITIONS) Set<Condition> pretextConditions) {
-        return new Monitor(executor, pretextConditions);
     }
 
     /** */

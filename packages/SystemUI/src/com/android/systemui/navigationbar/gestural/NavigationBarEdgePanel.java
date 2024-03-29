@@ -48,10 +48,10 @@ import androidx.dynamicanimation.animation.FloatPropertyCompat;
 import androidx.dynamicanimation.animation.SpringAnimation;
 import androidx.dynamicanimation.animation.SpringForce;
 
+import com.android.app.animation.Interpolators;
 import com.android.internal.util.LatencyTracker;
 import com.android.settingslib.Utils;
-import com.android.systemui.R;
-import com.android.systemui.animation.Interpolators;
+import com.android.systemui.res.R;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.plugins.NavigationEdgeBackPlugin;
 import com.android.systemui.settings.DisplayTracker;
@@ -655,8 +655,8 @@ public class NavigationBarEdgePanel extends View implements NavigationEdgeBackPl
         return mCurrentTranslation;
     }
 
-    private void triggerBack(boolean triggerLongSwipe) {
-        mBackCallback.triggerBack(triggerLongSwipe);
+    private void triggerBack() {
+        mBackCallback.triggerBack(false);
 
         if (mVelocityTracker == null) {
             mVelocityTracker = VelocityTracker.obtain();

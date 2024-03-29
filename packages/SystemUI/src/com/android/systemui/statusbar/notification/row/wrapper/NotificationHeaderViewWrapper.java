@@ -27,16 +27,17 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.view.animation.Interpolator;
 import android.view.animation.PathInterpolator;
+import android.widget.DateTimeView;
 import android.widget.ImageButton;
 import android.widget.ImageView;
 import android.widget.TextView;
 
 import androidx.annotation.Nullable;
 
+import com.android.app.animation.Interpolators;
 import com.android.internal.widget.CachingIconView;
 import com.android.internal.widget.NotificationExpandButton;
-import com.android.systemui.R;
-import com.android.systemui.animation.Interpolators;
+import com.android.systemui.res.R;
 import com.android.systemui.statusbar.TransformableView;
 import com.android.systemui.statusbar.ViewTransformationHelper;
 import com.android.systemui.statusbar.notification.CustomInterpolatorTransformation;
@@ -71,7 +72,6 @@ public class NotificationHeaderViewWrapper extends NotificationViewWrapper imple
     private View mFeedbackIcon;
     private boolean mIsLowPriority;
     private boolean mTransformLowPriorityTitle;
-    private boolean mUseRoundnessSourceTypes;
     private RoundnessChangedListener mRoundnessChangedListener;
 
     protected NotificationHeaderViewWrapper(Context ctx, View view, ExpandableNotificationRow row) {
@@ -120,8 +120,13 @@ public class NotificationHeaderViewWrapper extends NotificationViewWrapper imple
     }
 
     @Override
+    public int getClipHeight() {
+        return mView.getHeight();
+    }
+
+    @Override
     public void applyRoundnessAndInvalidate() {
-        if (mUseRoundnessSourceTypes && mRoundnessChangedListener != null) {
+        if (mRoundnessChangedListener != null) {
             // We cannot apply the rounded corner to this View, so our parents (in drawChild()) will
             // clip our canvas. So we should invalidate our parent.
             mRoundnessChangedListener.applyRoundnessAndInvalidate();
@@ -344,6 +349,21 @@ public class NotificationHeaderViewWrapper extends NotificationViewWrapper imple
         mTransformationHelper.setVisible(visible);
     }
 
+    /***
+     * Set Notification when value
+     * @param whenMillis
+     */
+    public void setNotificationWhen(long whenMillis) {
+        if (mNotificationHeader == null) {
+            return;
+        }
+
+        final View timeView = mNotificationHeader.findViewById(com.android.internal.R.id.time);
+
+        if (timeView instanceof DateTimeView) {
+            ((DateTimeView) timeView).setTime(whenMillis);
+        }
+    }
     protected void addTransformedViews(View... views) {
         for (View view : views) {
             if (view != null) {
@@ -358,15 +378,6 @@ public class NotificationHeaderViewWrapper extends NotificationViewWrapper imple
                 mTransformationHelper.addViewTransformingToSimilar(view);
             }
         }
-    }
-
-    /**
-     * Enable the support for rounded corner based on the SourceType
-     *
-     * @param enabled true if is supported
-     */
-    public void useRoundnessSourceTypes(boolean enabled) {
-        mUseRoundnessSourceTypes = enabled;
     }
 
     /**

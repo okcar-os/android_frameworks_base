@@ -119,8 +119,25 @@
     <attr name="wallpaperTextColorSecondary" format="reference|color" />
     <attr name="wallpaperTextColorAccent" format="reference|color" />
     <attr name="backgroundProtectedStyle" format="reference" />
-    <attr name="offStateColor" format="reference|color" />
-    <attr name="underSurfaceColor" format="reference|color" />
+
+    <!-- color attribute tokens for QS -->
+    <attr name="isQsTheme" format="boolean" />
+    <attr name="underSurface" format="reference|color"/>
+    <attr name="shadeActive" format="reference|color" />
+    <attr name="onShadeActive" format="reference|color" />
+    <attr name="onShadeActiveVariant" format="reference|color" />
+    <attr name="shadeInactive" format="reference|color" />
+    <attr name="onShadeInactive" format="reference|color" />
+    <attr name="onShadeInactiveVariant" format="reference|color" />
+    <attr name="shadeDisabled" format="reference|color" />
+    <attr name="surfaceBright" format="reference|color" />
+    <attr name="scHigh" format="reference|color" />
+    <attr name="tertiary" format="reference|color" />
+    <attr name="onSurface" format="reference|color" />
+    <attr name="onSurfaceVariant" format="reference|color" />
+    <attr name="outline" format="reference|color" />
+    <attr name="primary" format="reference|color" />
+
 
     <declare-styleable name="SmartReplyView">
         <attr name="spacing" format="dimension" />
@@ -147,6 +164,7 @@
         <attr name="allCaps" format="boolean" />
         <attr name="showMissingSim" format="boolean" />
         <attr name="showAirplaneMode" format="boolean" />
+        <attr name="debugLocation" format="string" />
     </declare-styleable>
 
     <declare-styleable name="IlluminationDrawable">
@@ -204,16 +222,12 @@
         <attr name="descriptionTextAppearance" format="reference" />
         <attr name="passwordTextAppearance" format="reference" />
         <attr name="errorTextAppearance" format="reference"/>
+        <attr name="errorTextAppearanceLand" format="reference"/>
     </declare-styleable>
 
-    <declare-styleable name="BiometricsEnrollView">
-        <attr name="biometricsEnrollStyle" format="reference" />
-        <attr name="biometricsEnrollIcon" format="reference|color" />
-        <attr name="biometricsMovingTargetFill" format="reference|color" />
-        <attr name="biometricsMovingTargetFillError" format="reference|color" />
-        <attr name="biometricsEnrollProgress" format="reference|color" />
-        <attr name="biometricsEnrollProgressHelp" format="reference|color" />
-        <attr name="biometricsEnrollProgressHelpWithTalkback" format="reference|color" />
+    <declare-styleable name="LogAccessPermissionGrantDialog">
+        <attr name="permissionGrantButtonTopStyle" format="reference"/>
+        <attr name="permissionGrantButtonBottomStyle" format="reference"/>
     </declare-styleable>
 
     <declare-styleable name="SeekBarWithIconButtonsView_Layout">
@@ -221,6 +235,8 @@
         <attr name="progress" format="integer" />
         <attr name="iconStartContentDescription" format="reference" />
         <attr name="iconEndContentDescription" format="reference" />
+        <attr name="tickMark" format="reference" />
+        <attr name="seekBarChangeMagnitude" format="integer" />
     </declare-styleable>
 </resources>
 

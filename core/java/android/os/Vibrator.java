@@ -153,7 +153,7 @@ public abstract class Vibrator {
      *
      * @hide
      */
-    protected VibratorInfo getInfo() {
+    public VibratorInfo getInfo() {
         return VibratorInfo.EMPTY_VIBRATOR_INFO;
     }
 
@@ -181,6 +181,16 @@ public abstract class Vibrator {
     @VibrationIntensity
     public int getDefaultVibrationIntensity(@VibrationAttributes.Usage int usage) {
         return getConfig().getDefaultVibrationIntensity(usage);
+    }
+
+    /**
+     * Whether the keyboard vibration is enabled by default.
+     *
+     * @return {@code true} if the keyboard vibration is default enabled, {@code false} otherwise.
+     * @hide
+     */
+    public boolean isDefaultKeyboardVibrationEnabled() {
+        return getConfig().isDefaultKeyboardVibrationEnabled();
     }
 
     /**
@@ -216,9 +226,29 @@ public abstract class Vibrator {
      */
     @TestApi
     public boolean hasFrequencyControl() {
-        // We currently can only control frequency of the vibration using the compose PWLE method.
-        return getInfo().hasCapability(
-                IVibrator.CAP_FREQUENCY_CONTROL | IVibrator.CAP_COMPOSE_PWLE_EFFECTS);
+        return getInfo().hasFrequencyControl();
+    }
+
+    /**
+     * Checks whether or not the vibrator supports all components of a given {@link VibrationEffect}
+     * (i.e. the vibrator can play the given effect as intended).
+     *
+     * <p>If this method returns {@code true}, then the VibrationEffect should play as expected.
+     * If {@code false}, playing the VibrationEffect might still make a vibration, but the vibration
+     * may be significantly degraded from the intention.
+     *
+     * <p>This method aggregates the results of feature check methods such as
+     * {@link #hasAmplitudeControl}, {@link #areAllPrimitivesSupported(int...)}, etc, depending
+     * on the features that are actually used by the VibrationEffect.
+     *
+     * @param effect the {@link VibrationEffect} to check if it is supported
+     * @return {@code true} if the vibrator can play the given {@code effect} as intended,
+     *         {@code false} otherwise.
+     *
+     * @hide
+     */
+    public boolean areVibrationFeaturesSupported(@NonNull VibrationEffect effect) {
+        return getInfo().areVibrationFeaturesSupported(effect);
     }
 
     /**
@@ -238,9 +268,7 @@ public abstract class Vibrator {
      * @return the resonant frequency of the vibrator, or {@link Float#NaN NaN} if it's unknown, not
      * applicable, or if this vibrator is a composite of multiple physical devices with different
      * frequencies.
-     * @hide
      */
-    @TestApi
     public float getResonantFrequency() {
         return getInfo().getResonantFrequencyHz();
     }
@@ -251,9 +279,7 @@ public abstract class Vibrator {
      * @return the Q factor of the vibrator, or {@link Float#NaN NaN} if it's unknown, not
      * applicable, or if this vibrator is a composite of multiple physical devices with different
      * Q factors.
-     * @hide
      */
-    @TestApi
     public float getQFactor() {
         return getInfo().getQFactor();
     }
@@ -494,6 +520,28 @@ public abstract class Vibrator {
             String reason, @NonNull VibrationAttributes attributes);
 
     /**
+     * Performs a haptic feedback.
+     *
+     * <p>A haptic feedback is a short vibration feedback. The type of feedback is identified via
+     * the {@code constant}, which should be one of the effect constants provided in
+     * {@link HapticFeedbackConstants}. The haptic feedback provided for a given effect ID is
+     * consistent across all usages on the same device.
+     *
+     * @param constant the ID for the haptic feedback. This should be one of the constants defined
+     *          in {@link HapticFeedbackConstants}.
+     * @param always {@code true} if the haptic feedback should be played regardless of the user
+     *          vibration intensity settings applicable to the corresponding vibration.
+     *          {@code false} if the vibration for the haptic feedback should respect the applicable
+     *          vibration intensity settings.
+     * @param reason the reason for this haptic feedback.
+     *
+     * @hide
+     */
+    public void performHapticFeedback(int constant, boolean always, String reason) {
+        Log.w(TAG, "performHapticFeedback is not supported");
+    }
+
+    /**
      * Query whether the vibrator natively supports the given effects.
      *
      * <p>If an effect is not supported, the system may still automatically fall back to playing
@@ -527,7 +575,8 @@ public abstract class Vibrator {
     }
 
     /**
-     * Query whether the vibrator supports all the given effects.
+     * Query whether the vibrator supports all the given effects. If no argument is provided this
+     * method will always return {@link #VIBRATION_EFFECT_SUPPORT_YES}.
      *
      * <p>If an effect is not supported, the system may still automatically fall back to a simpler
      * vibration instead, which is not optimised for the specific device, however vibration isn't
@@ -549,7 +598,8 @@ public abstract class Vibrator {
      * <p>Use {@link #areEffectsSupported(int...)} to get individual results for each effect.
      *
      * @param effectIds Which effects to query for.
-     * @return Whether all the effects are natively supported by the device.
+     * @return Whether all specified effects are natively supported by the device. Empty query
+     * defaults to {@link #VIBRATION_EFFECT_SUPPORT_YES}.
      */
     @VibrationEffectSupport
     public final int areAllEffectsSupported(
@@ -598,7 +648,8 @@ public abstract class Vibrator {
     }
 
     /**
-     * Query whether the vibrator supports all of the given primitives.
+     * Query whether the vibrator supports all of the given primitives.  If no argument is provided
+     * this method will always return {@code true}.
      *
      * <p>If a primitive is not supported by the device, then <em>no vibration</em> will occur if
      * it is played.
@@ -606,7 +657,7 @@ public abstract class Vibrator {
      * <p>Use {@link #arePrimitivesSupported(int...)} to get individual results for each primitive.
      *
      * @param primitiveIds Which primitives to query for.
-     * @return Whether all specified primitives are supported.
+     * @return Whether all specified primitives are supported. Empty query defaults to {@code true}.
      */
     public final boolean areAllPrimitivesSupported(
             @NonNull @VibrationEffect.Composition.PrimitiveType int... primitiveIds) {

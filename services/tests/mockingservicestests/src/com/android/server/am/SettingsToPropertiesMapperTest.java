@@ -102,7 +102,7 @@ public class SettingsToPropertiesMapperTest {
         ).when(() -> Settings.Global.getString(any(), anyString()));
 
         mTestMapper = new SettingsToPropertiesMapper(
-            mMockContentResolver, TEST_MAPPING, new String[] {});
+            mMockContentResolver, TEST_MAPPING, new String[] {}, new String[] {});
     }
 
     @After
@@ -204,7 +204,7 @@ public class SettingsToPropertiesMapperTest {
 
     @Test
     public void testUpdatePropertiesFromSettings_PropertyAndSettingNotPresent() {
-        // Test that empty property will not not be set if setting is not set
+        // Test that empty property will not be set if setting is not set
         mTestMapper.updatePropertiesFromSettings();
         String propValue = mSystemSettingsMap.get("TestProperty");
         Assert.assertNull("Property should not be set if setting is null", propValue);

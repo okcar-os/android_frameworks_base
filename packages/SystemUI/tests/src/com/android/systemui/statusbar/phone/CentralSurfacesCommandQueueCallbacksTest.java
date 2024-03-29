@@ -18,11 +18,10 @@ package com.android.systemui.statusbar.phone;
 
 import static android.view.Display.DEFAULT_DISPLAY;
 
-import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyZeroInteractions;
 import static org.mockito.Mockito.when;
 
 import android.app.ActivityManager;
@@ -31,31 +30,33 @@ import android.os.PowerManager;
 import android.os.UserHandle;
 import android.os.Vibrator;
 import android.testing.AndroidTestingRunner;
-import android.view.InsetsVisibilities;
+import android.view.HapticFeedbackConstants;
 
 import androidx.test.filters.SmallTest;
 
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.testing.FakeMetricsLogger;
-import com.android.internal.statusbar.LetterboxDetails;
-import com.android.internal.view.AppearanceRegion;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.assist.AssistManager;
 import com.android.systemui.keyguard.WakefulnessLifecycle;
+import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.qs.QSHost;
+import com.android.systemui.recents.ScreenPinningRequest;
 import com.android.systemui.settings.UserTracker;
 import com.android.systemui.shade.CameraLauncher;
-import com.android.systemui.shade.NotificationPanelViewController;
 import com.android.systemui.shade.QuickSettingsController;
 import com.android.systemui.shade.ShadeController;
+import com.android.systemui.shade.ShadeViewController;
 import com.android.systemui.statusbar.CommandQueue;
-import com.android.systemui.statusbar.DisableFlagsLogger;
-import com.android.systemui.statusbar.VibratorHelper;
+import com.android.systemui.statusbar.disableflags.DisableFlagsLogger;
 import com.android.systemui.statusbar.notification.stack.NotificationStackScrollLayoutController;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController;
+import com.android.systemui.statusbar.policy.HeadsUpManager;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 import com.android.systemui.statusbar.policy.RemoteInputQuickSettingsDisabler;
+
+import dagger.Lazy;
 
 import org.junit.Before;
 import org.junit.Test;
@@ -66,22 +67,21 @@ import org.mockito.stubbing.Answer;
 
 import java.util.Optional;
 
-import dagger.Lazy;
-
 @SmallTest
 @RunWith(AndroidTestingRunner.class)
 public class CentralSurfacesCommandQueueCallbacksTest extends SysuiTestCase {
 
     @Mock private CentralSurfaces mCentralSurfaces;
+    @Mock private ScreenPinningRequest mScreenPinningRequest;
     @Mock private ShadeController mShadeController;
     @Mock private CommandQueue mCommandQueue;
     @Mock private QuickSettingsController mQuickSettingsController;
-    @Mock private NotificationPanelViewController mNotificationPanelViewController;
+    @Mock private ShadeViewController mShadeViewController;
     @Mock private RemoteInputQuickSettingsDisabler mRemoteInputQuickSettingsDisabler;
     private final MetricsLogger mMetricsLogger = new FakeMetricsLogger();
     @Mock private KeyguardUpdateMonitor mKeyguardUpdateMonitor;
     @Mock private KeyguardStateController mKeyguardStateController;
-    @Mock private HeadsUpManagerPhone mHeadsUpManager;
+    @Mock private HeadsUpManager mHeadsUpManager;
     @Mock private WakefulnessLifecycle mWakefulnessLifecycle;
     @Mock private DeviceProvisionedController mDeviceProvisionedController;
     @Mock private StatusBarKeyguardViewManager mStatusBarKeyguardViewManager;
@@ -89,13 +89,12 @@ public class CentralSurfacesCommandQueueCallbacksTest extends SysuiTestCase {
     @Mock private DozeServiceHost mDozeServiceHost;
     @Mock private NotificationStackScrollLayoutController mNotificationStackScrollLayoutController;
     @Mock private PowerManager mPowerManager;
-    @Mock private VibratorHelper mVibratorHelper;
     @Mock private Vibrator mVibrator;
     @Mock private StatusBarHideIconsForBouncerManager mStatusBarHideIconsForBouncerManager;
-    @Mock private SystemBarAttributesListener mSystemBarAttributesListener;
     @Mock private Lazy<CameraLauncher> mCameraLauncherLazy;
     @Mock private UserTracker mUserTracker;
     @Mock private QSHost mQSHost;
+    @Mock private ActivityStarter mActivityStarter;
 
     CentralSurfacesCommandQueueCallbacks mSbcqCallbacks;
 
@@ -108,9 +107,10 @@ public class CentralSurfacesCommandQueueCallbacksTest extends SysuiTestCase {
                 mQuickSettingsController,
                 mContext,
                 mContext.getResources(),
+                mScreenPinningRequest,
                 mShadeController,
                 mCommandQueue,
-                mNotificationPanelViewController,
+                mShadeViewController,
                 mRemoteInputQuickSettingsDisabler,
                 mMetricsLogger,
                 mKeyguardUpdateMonitor,
@@ -124,14 +124,13 @@ public class CentralSurfacesCommandQueueCallbacksTest extends SysuiTestCase {
                 mNotificationStackScrollLayoutController,
                 mStatusBarHideIconsForBouncerManager,
                 mPowerManager,
-                mVibratorHelper,
                 Optional.of(mVibrator),
                 new DisableFlagsLogger(),
                 DEFAULT_DISPLAY,
-                mSystemBarAttributesListener,
                 mCameraLauncherLazy,
                 mUserTracker,
-                mQSHost);
+                mQSHost,
+                mActivityStarter);
 
         when(mUserTracker.getUserHandle()).thenReturn(
                 UserHandle.of(ActivityManager.getCurrentUser()));
@@ -142,38 +141,33 @@ public class CentralSurfacesCommandQueueCallbacksTest extends SysuiTestCase {
 
     @Test
     public void testDisableNotificationShade() {
-        when(mCentralSurfaces.getDisabled1()).thenReturn(StatusBarManager.DISABLE_NONE);
-        when(mCentralSurfaces.getDisabled2()).thenReturn(StatusBarManager.DISABLE_NONE);
+        // Start with nothing disabled
+        mSbcqCallbacks.disable(DEFAULT_DISPLAY, StatusBarManager.DISABLE_NONE,
+                StatusBarManager.DISABLE2_NONE, false);
+
         when(mCommandQueue.panelsEnabled()).thenReturn(false);
+        // WHEN the new disable flags have the shade disabled
         mSbcqCallbacks.disable(DEFAULT_DISPLAY, StatusBarManager.DISABLE_NONE,
                 StatusBarManager.DISABLE2_NOTIFICATION_SHADE, false);
 
-        verify(mCentralSurfaces).updateQsExpansionEnabled();
+        // THEN the shade is collapsed
         verify(mShadeController).animateCollapseShade();
-
-        // Trying to open it does nothing.
-        mSbcqCallbacks.animateExpandNotificationsPanel();
-        verify(mNotificationPanelViewController, never()).expandShadeToNotifications();
-        mSbcqCallbacks.animateExpandSettingsPanel(null);
-        verify(mNotificationPanelViewController, never()).expand(anyBoolean());
     }
 
     @Test
     public void testEnableNotificationShade() {
-        when(mCentralSurfaces.getDisabled1()).thenReturn(StatusBarManager.DISABLE_NONE);
-        when(mCentralSurfaces.getDisabled2())
-                .thenReturn(StatusBarManager.DISABLE2_NOTIFICATION_SHADE);
+        // Start with the shade disabled
+        mSbcqCallbacks.disable(DEFAULT_DISPLAY, StatusBarManager.DISABLE_NONE,
+                StatusBarManager.DISABLE2_NOTIFICATION_SHADE, false);
+        reset(mShadeController);
+
         when(mCommandQueue.panelsEnabled()).thenReturn(true);
+        // WHEN the new disable flags have the shade enabled
         mSbcqCallbacks.disable(DEFAULT_DISPLAY, StatusBarManager.DISABLE_NONE,
                 StatusBarManager.DISABLE2_NONE, false);
-        verify(mCentralSurfaces).updateQsExpansionEnabled();
-        verify(mShadeController, never()).animateCollapseShade();
 
-        // Can now be opened.
-        mSbcqCallbacks.animateExpandNotificationsPanel();
-        verify(mNotificationPanelViewController).expandShadeToNotifications();
-        mSbcqCallbacks.animateExpandSettingsPanel(null);
-        verify(mNotificationPanelViewController).expandWithQs();
+        // THEN the shade is not collapsed
+        verify(mShadeController, never()).animateCollapseShade();
     }
 
     @Test
@@ -189,58 +183,11 @@ public class CentralSurfacesCommandQueueCallbacksTest extends SysuiTestCase {
     }
 
     @Test
-    public void onSystemBarAttributesChanged_forwardsToSysBarAttrsListener() {
-        int displayId = DEFAULT_DISPLAY;
-        int appearance = 123;
-        AppearanceRegion[] appearanceRegions = new AppearanceRegion[]{};
-        boolean navbarColorManagedByIme = true;
-        int behavior = 456;
-        InsetsVisibilities requestedVisibilities = new InsetsVisibilities();
-        String packageName = "test package name";
-        LetterboxDetails[] letterboxDetails = new LetterboxDetails[]{};
+    public void vibrateOnNavigationKeyDown_usesPerformHapticFeedback() {
+        mSbcqCallbacks.vibrateOnNavigationKeyDown();
 
-        mSbcqCallbacks.onSystemBarAttributesChanged(
-                displayId,
-                appearance,
-                appearanceRegions,
-                navbarColorManagedByIme,
-                behavior,
-                requestedVisibilities,
-                packageName,
-                letterboxDetails);
-
-        verify(mSystemBarAttributesListener).onSystemBarAttributesChanged(
-                displayId,
-                appearance,
-                appearanceRegions,
-                navbarColorManagedByIme,
-                behavior,
-                requestedVisibilities,
-                packageName,
-                letterboxDetails
+        verify(mShadeViewController).performHapticFeedback(
+                HapticFeedbackConstants.GESTURE_START
         );
-    }
-
-    @Test
-    public void onSystemBarAttributesChanged_differentDisplayId_doesNotForwardToAttrsListener() {
-        int appearance = 123;
-        AppearanceRegion[] appearanceRegions = new AppearanceRegion[]{};
-        boolean navbarColorManagedByIme = true;
-        int behavior = 456;
-        InsetsVisibilities requestedVisibilities = new InsetsVisibilities();
-        String packageName = "test package name";
-        LetterboxDetails[] letterboxDetails = new LetterboxDetails[]{};
-
-        mSbcqCallbacks.onSystemBarAttributesChanged(
-                DEFAULT_DISPLAY + 1,
-                appearance,
-                appearanceRegions,
-                navbarColorManagedByIme,
-                behavior,
-                requestedVisibilities,
-                packageName,
-                letterboxDetails);
-
-        verifyZeroInteractions(mSystemBarAttributesListener);
     }
 }

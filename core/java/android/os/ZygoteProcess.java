@@ -82,13 +82,6 @@ public class ZygoteProcess {
     private static final String LOG_TAG = "ZygoteProcess";
 
     /**
-     * The default value for enabling the unspecialized app process (USAP) pool.  This value will
-     * not be used if the devices has a DeviceConfig profile pushed to it that contains a value for
-     * this key.
-     */
-    private static final String USAP_POOL_ENABLED_DEFAULT = "false";
-
-    /**
      * The name of the socket used to communicate with the primary zygote.
      */
     private final LocalSocketAddress mZygoteSocketAddress;
@@ -362,6 +355,7 @@ public class ZygoteProcess {
                                                           allowlistedDataInfoList,
                                                   boolean bindMountAppsData,
                                                   boolean bindMountAppStorageDirs,
+                                                  boolean bindOverrideSysprops,
                                                   @Nullable String[] zygoteArgs) {
         // TODO (chriswailes): Is there a better place to check this value?
         if (fetchUsapPoolEnabledPropWithMinInterval()) {
@@ -374,7 +368,7 @@ public class ZygoteProcess {
                     abi, instructionSet, appDataDir, invokeWith, /*startChildZygote=*/ false,
                     packageName, zygotePolicyFlags, isTopApp, disabledCompatChanges,
                     pkgDataInfoMap, allowlistedDataInfoList, bindMountAppsData,
-                    bindMountAppStorageDirs, zygoteArgs);
+                    bindMountAppStorageDirs, bindOverrideSysprops, zygoteArgs);
         } catch (ZygoteStartFailedEx ex) {
             Log.e(LOG_TAG,
                     "Starting VM process through Zygote failed");
@@ -645,6 +639,7 @@ public class ZygoteProcess {
                                                               allowlistedDataInfoList,
                                                       boolean bindMountAppsData,
                                                       boolean bindMountAppStorageDirs,
+                                                      boolean bindMountOverrideSysprops,
                                                       @Nullable String[] extraArgs)
                                                       throws ZygoteStartFailedEx {
         ArrayList<String> argsForZygote = new ArrayList<>();
@@ -760,6 +755,10 @@ public class ZygoteProcess {
             argsForZygote.add(Zygote.BIND_MOUNT_APP_DATA_DIRS);
         }
 
+        if (bindMountOverrideSysprops) {
+            argsForZygote.add(Zygote.BIND_MOUNT_SYSPROP_OVERRIDES);
+        }
+
         if (disabledCompatChanges != null && disabledCompatChanges.length > 0) {
             StringBuilder sb = new StringBuilder();
             sb.append("--disabled-compat-changes=");
@@ -793,14 +792,8 @@ public class ZygoteProcess {
     private boolean fetchUsapPoolEnabledProp() {
         boolean origVal = mUsapPoolEnabled;
 
-        final String propertyString = Zygote.getConfigurationProperty(
-                ZygoteConfig.USAP_POOL_ENABLED, USAP_POOL_ENABLED_DEFAULT);
-
-        if (!propertyString.isEmpty()) {
-            mUsapPoolEnabled = Zygote.getConfigurationPropertyBoolean(
-                  ZygoteConfig.USAP_POOL_ENABLED,
-                  Boolean.parseBoolean(USAP_POOL_ENABLED_DEFAULT));
-        }
+        mUsapPoolEnabled = ZygoteConfig.getBool(
+            ZygoteConfig.USAP_POOL_ENABLED, ZygoteConfig.USAP_POOL_ENABLED_DEFAULT);
 
         boolean valueChanged = origVal != mUsapPoolEnabled;
 
@@ -1319,7 +1312,8 @@ public class ZygoteProcess {
                     ZYGOTE_POLICY_FLAG_SYSTEM_PROCESS /* zygotePolicyFlags */, false /* isTopApp */,
                     null /* disabledCompatChanges */, null /* pkgDataInfoMap */,
                     null /* allowlistedDataInfoList */, true /* bindMountAppsData*/,
-                    /* bindMountAppStorageDirs */ false, extraArgs);
+                    /* bindMountAppStorageDirs */ false, /*bindMountOverrideSysprops */ false,
+                    extraArgs);
 
         } catch (ZygoteStartFailedEx ex) {
             throw new RuntimeException("Starting child-zygote through Zygote failed", ex);

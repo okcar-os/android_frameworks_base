@@ -23,8 +23,8 @@ import android.view.ViewRootImpl;
 import androidx.annotation.Nullable;
 
 import com.android.systemui.keyguard.KeyguardViewMediator;
-import com.android.systemui.shade.NotificationPanelViewController;
 import com.android.systemui.shade.ShadeExpansionStateManager;
+import com.android.systemui.shade.ShadeViewController;
 import com.android.systemui.statusbar.phone.BiometricUnlockController;
 import com.android.systemui.statusbar.phone.CentralSurfaces;
 import com.android.systemui.statusbar.phone.KeyguardBypassController;
@@ -119,6 +119,14 @@ public interface KeyguardViewController {
     boolean isUnlockWithWallpaper();
 
     /**
+     * @return Whether the bouncer over dream is showing. Note that the bouncer over dream is
+     * handled independently of the rest of the notification panel. As a result, setting this state
+     * via {@link CentralSurfaces#setBouncerShowing(boolean)} leads to unintended side effects from
+     * states modified behind the dream.
+     */
+    boolean isBouncerShowingOverDream();
+
+    /**
      * @return Whether subtle animation should be used for unlocking the device.
      */
     boolean shouldSubtleWindowAnimationsForUnlock();
@@ -178,7 +186,7 @@ public interface KeyguardViewController {
      * Registers the CentralSurfaces to which this Keyguard View is mounted.
      */
     void registerCentralSurfaces(CentralSurfaces centralSurfaces,
-            NotificationPanelViewController notificationPanelViewController,
+            ShadeViewController shadeViewController,
             @Nullable ShadeExpansionStateManager shadeExpansionStateManager,
             BiometricUnlockController biometricUnlockController,
             View notificationContainer,

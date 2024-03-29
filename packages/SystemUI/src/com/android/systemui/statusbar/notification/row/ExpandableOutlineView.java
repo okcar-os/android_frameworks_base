@@ -28,7 +28,9 @@ import android.util.IndentingPrintWriter;
 import android.view.View;
 import android.view.ViewOutlineProvider;
 
-import com.android.systemui.R;
+import com.android.systemui.flags.Flags;
+import com.android.systemui.flags.RefactorFlag;
+import com.android.systemui.res.R;
 import com.android.systemui.statusbar.notification.RoundableState;
 import com.android.systemui.statusbar.notification.stack.NotificationChildrenContainer;
 import com.android.systemui.util.DumpUtilsKt;
@@ -47,12 +49,15 @@ public abstract class ExpandableOutlineView extends ExpandableView {
     private float mOutlineAlpha = -1f;
     private boolean mAlwaysRoundBothCorners;
     private Path mTmpPath = new Path();
+    protected final RefactorFlag mImprovedHunAnimation =
+            RefactorFlag.forView(Flags.IMPROVED_HUN_ANIMATIONS);
 
     /**
      * {@code false} if the children views of the {@link ExpandableOutlineView} are translated when
      * it is moved. Otherwise, the translation is set on the {@code ExpandableOutlineView} itself.
      */
     protected boolean mDismissUsingRowTranslationX = true;
+
     private float[] mTmpCornerRadii = new float[8];
 
     private final ViewOutlineProvider mProvider = new ViewOutlineProvider() {
@@ -79,6 +84,15 @@ public abstract class ExpandableOutlineView extends ExpandableView {
     @Override
     public RoundableState getRoundableState() {
         return mRoundableState;
+    }
+
+    @Override
+    public int getClipHeight() {
+        if (mCustomOutline) {
+            return mOutlineRect.height();
+        }
+
+        return super.getClipHeight();
     }
 
     protected Path getClipPath(boolean ignoreTranslation) {
@@ -112,7 +126,7 @@ public abstract class ExpandableOutlineView extends ExpandableView {
             return EMPTY_PATH;
         }
         float bottomRadius = mAlwaysRoundBothCorners ? getMaxRadius() : getBottomCornerRadius();
-        if (topRadius + bottomRadius > height) {
+        if (!mImprovedHunAnimation.isEnabled() && (topRadius + bottomRadius > height)) {
             float overShoot = topRadius + bottomRadius - height;
             float currentTopRoundness = getTopRoundness();
             float currentBottomRoundness = getBottomRoundness();
@@ -352,7 +366,7 @@ public abstract class ExpandableOutlineView extends ExpandableView {
         IndentingPrintWriter pw = DumpUtilsKt.asIndenting(pwOriginal);
         super.dump(pw, args);
         DumpUtilsKt.withIncreasedIndent(pw, () -> {
-            pw.println("Roundness: " + getRoundableState().debugString());
+            pw.println(getRoundableState().debugString());
             if (DUMP_VERBOSE) {
                 pw.println("mCustomOutline: " + mCustomOutline + " mOutlineRect: " + mOutlineRect);
                 pw.println("mOutlineAlpha: " + mOutlineAlpha);
@@ -360,4 +374,5 @@ public abstract class ExpandableOutlineView extends ExpandableView {
             }
         });
     }
+
 }

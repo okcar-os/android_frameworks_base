@@ -16,8 +16,8 @@
 
 package com.android.systemui.statusbar.lockscreen
 
+import android.app.ActivityOptions
 import android.app.PendingIntent
-import android.app.WallpaperManager
 import android.app.smartspace.SmartspaceConfig
 import android.app.smartspace.SmartspaceManager
 import android.app.smartspace.SmartspaceSession
@@ -39,7 +39,7 @@ import android.view.ViewGroup
 import com.android.keyguard.KeyguardUpdateMonitor
 import com.android.settingslib.Utils
 import com.android.systemui.Dumpable
-import com.android.systemui.R
+import com.android.systemui.res.R
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Background
 import com.android.systemui.dagger.qualifiers.Main
@@ -52,17 +52,18 @@ import com.android.systemui.plugins.BcSmartspaceDataPlugin
 import com.android.systemui.plugins.BcSmartspaceDataPlugin.SmartspaceTargetListener
 import com.android.systemui.plugins.BcSmartspaceDataPlugin.SmartspaceView
 import com.android.systemui.plugins.FalsingManager
-import com.android.systemui.plugins.WeatherData
+import com.android.systemui.plugins.clocks.WeatherData
 import com.android.systemui.plugins.statusbar.StatusBarStateController
 import com.android.systemui.settings.UserTracker
 import com.android.systemui.shared.regionsampling.RegionSampler
-import com.android.systemui.shared.regionsampling.UpdateColorCallback
 import com.android.systemui.smartspace.dagger.SmartspaceModule.Companion.DATE_SMARTSPACE_DATA_PLUGIN
 import com.android.systemui.smartspace.dagger.SmartspaceModule.Companion.WEATHER_SMARTSPACE_DATA_PLUGIN
 import com.android.systemui.statusbar.phone.KeyguardBypassController
 import com.android.systemui.statusbar.policy.ConfigurationController
 import com.android.systemui.statusbar.policy.DeviceProvisionedController
+import com.android.systemui.util.asIndenting
 import com.android.systemui.util.concurrency.Execution
+import com.android.systemui.util.printCollection
 import com.android.systemui.util.settings.SecureSettings
 import com.android.systemui.util.time.SystemClock
 import java.io.PrintWriter
@@ -79,7 +80,7 @@ class LockscreenSmartspaceController
 constructor(
         private val context: Context,
         private val featureFlags: FeatureFlags,
-        private val smartspaceManager: SmartspaceManager,
+        private val smartspaceManager: SmartspaceManager?,
         private val activityStarter: ActivityStarter,
         private val falsingManager: FalsingManager,
         private val systemClock: SystemClock,
@@ -120,28 +121,46 @@ constructor(
 
     private val regionSamplingEnabled =
             featureFlags.isEnabled(Flags.REGION_SAMPLING)
-    private var isContentUpdatedOnce = false
+    private var isRegionSamplersCreated = false
     private var showNotifications = false
     private var showSensitiveContentForCurrentUser = false
     private var showSensitiveContentForManagedUser = false
     private var managedUserHandle: UserHandle? = null
+    private var mSplitShadeEnabled = false
 
     // TODO(b/202758428): refactor so that we can test color updates via region samping, similar to
     //  how we test color updates when theme changes (See testThemeChangeUpdatesTextColor).
-    private val updateFun: UpdateColorCallback = { updateTextColorFromRegionSampler() }
 
+    // TODO: Move logic into SmartspaceView
     var stateChangeListener = object : View.OnAttachStateChangeListener {
         override fun onViewAttachedToWindow(v: View) {
+            (v as SmartspaceView).setSplitShadeEnabled(mSplitShadeEnabled)
             smartspaceViews.add(v as SmartspaceView)
 
             connectSession()
 
             updateTextColorFromWallpaper()
             statusBarStateListener.onDozeAmountChanged(0f, statusBarStateController.dozeAmount)
+
+            if (regionSamplingEnabled && (!regionSamplers.containsKey(v))) {
+                var regionSampler = RegionSampler(
+                        v as View,
+                        uiExecutor,
+                        bgExecutor,
+                        regionSamplingEnabled,
+                        isLockscreen = true,
+                ) { updateTextColorFromRegionSampler() }
+                initializeTextColors(regionSampler)
+                regionSamplers[v] = regionSampler
+                regionSampler.startRegionSampler()
+            }
         }
 
         override fun onViewDetachedFromWindow(v: View) {
             smartspaceViews.remove(v as SmartspaceView)
+
+            regionSamplers[v]?.stopRegionSampler()
+            regionSamplers.remove(v as SmartspaceView)
 
             if (smartspaceViews.isEmpty()) {
                 disconnect()
@@ -161,7 +180,21 @@ constructor(
                     now.isBefore(Instant.ofEpochMilli(t.expiryTimeMillis))
         }
         if (weatherTarget != null) {
-            val weatherData = WeatherData.fromBundle(weatherTarget.baseAction.extras)
+            val clickIntent = weatherTarget.headerAction?.intent
+            val weatherData = weatherTarget.baseAction?.extras?.let { extras ->
+                WeatherData.fromBundle(
+                    extras,
+                ) { _ ->
+                    if (!falsingManager.isFalseTap(FalsingManager.LOW_PENALTY)) {
+                        activityStarter.startActivity(
+                            clickIntent,
+                            true, /* dismissShade */
+                            null,
+                            false)
+                    }
+                }
+            }
+
             if (weatherData != null) {
                 keyguardUpdateMonitor.sendWeatherData(weatherData)
             }
@@ -169,24 +202,6 @@ constructor(
 
         val filteredTargets = targets.filter(::filterSmartspaceTarget)
         plugin?.onTargetsAvailable(filteredTargets)
-        if (!isContentUpdatedOnce) {
-            for (v in smartspaceViews) {
-                if (regionSamplingEnabled) {
-                    var regionSampler = RegionSampler(
-                        v as View,
-                        uiExecutor,
-                        bgExecutor,
-                        regionSamplingEnabled,
-                        updateFun
-                    )
-                    initializeTextColors(regionSampler)
-                    regionSamplers[v] = regionSampler
-                    regionSampler.startRegionSampler()
-                }
-                updateTextColorFromWallpaper()
-            }
-            isContentUpdatedOnce = true
-        }
     }
 
     private val userTrackerCallback = object : UserTracker.Callback {
@@ -214,6 +229,11 @@ constructor(
         override fun onDozeAmountChanged(linear: Float, eased: Float) {
             execution.assertIsMainThread()
             smartspaceViews.forEach { it.setDozeAmount(eased) }
+        }
+
+        override fun onDozingChanged(isDozing: Boolean) {
+            execution.assertIsMainThread()
+            smartspaceViews.forEach { it.setDozing(isDozing) }
         }
     }
 
@@ -249,8 +269,7 @@ constructor(
     fun isDateWeatherDecoupled(): Boolean {
         execution.assertIsMainThread()
 
-        return featureFlags.isEnabled(Flags.SMARTSPACE_DATE_WEATHER_DECOUPLED) &&
-                datePlugin != null && weatherPlugin != null
+        return datePlugin != null && weatherPlugin != null
     }
 
     fun isWeatherEnabled(): Boolean {
@@ -352,9 +371,17 @@ constructor(
                 }
             }
 
-            override fun startPendingIntent(pi: PendingIntent, showOnLockscreen: Boolean) {
+            override fun startPendingIntent(
+                    view: View,
+                    pi: PendingIntent,
+                    showOnLockscreen: Boolean
+            ) {
                 if (showOnLockscreen) {
-                    pi.send()
+                    val options = ActivityOptions.makeBasic()
+                            .setPendingIntentBackgroundActivityStartMode(
+                                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED)
+                            .toBundle()
+                    pi.send(options)
                 } else {
                     activityStarter.postStartActivityDismissingKeyguard(pi)
                 }
@@ -362,10 +389,14 @@ constructor(
         })
         ssView.setFalsingManager(falsingManager)
         ssView.setKeyguardBypassEnabled(bypassController.bypassEnabled)
-        return (ssView as View).apply { addOnAttachStateChangeListener(stateChangeListener) }
+        return (ssView as View).apply {
+            setTag(R.id.tag_smartspace_view, Any())
+            addOnAttachStateChangeListener(stateChangeListener)
+        }
     }
 
     private fun connectSession() {
+        if (smartspaceManager == null) return
         if (datePlugin == null && weatherPlugin == null && plugin == null) return
         if (session != null || smartspaceViews.isEmpty()) {
             return
@@ -410,6 +441,11 @@ constructor(
 
         updateBypassEnabled()
         reloadSmartspace()
+    }
+
+    fun setSplitShadeEnabled(enabled: Boolean) {
+        mSplitShadeEnabled = enabled
+        smartspaceViews.forEach { it.setSplitShadeEnabled(enabled) }
     }
 
     /**
@@ -464,8 +500,8 @@ constructor(
     }
 
     private fun filterSmartspaceTarget(t: SmartspaceTarget): Boolean {
-        if (isDateWeatherDecoupled()) {
-            return t.featureType != SmartspaceTarget.FEATURE_WEATHER
+        if (isDateWeatherDecoupled() && t.featureType == SmartspaceTarget.FEATURE_WEATHER) {
+            return false
         }
         if (!showNotifications) {
             return t.featureType == SmartspaceTarget.FEATURE_WEATHER
@@ -499,18 +535,16 @@ constructor(
     }
 
     private fun updateTextColorFromRegionSampler() {
-        smartspaceViews.forEach {
-            val textColor = regionSamplers.get(it)?.currentForegroundColor()
+        regionSamplers.forEach { (view, region) ->
+            val textColor = region.currentForegroundColor()
             if (textColor != null) {
-                it.setPrimaryTextColor(textColor)
+                view.setPrimaryTextColor(textColor)
             }
         }
     }
 
     private fun updateTextColorFromWallpaper() {
-        val wallpaperManager = WallpaperManager.getInstance(context)
-        if (!regionSamplingEnabled || wallpaperManager.lockScreenWallpaperExists() ||
-            regionSamplers.isEmpty()) {
+        if (!regionSamplingEnabled || regionSamplers.isEmpty()) {
             val wallpaperTextColor =
                     Utils.getColorAttrDefaultColor(context, R.attr.wallpaperTextColor)
             smartspaceViews.forEach { it.setPrimaryTextColor(wallpaperTextColor) }
@@ -554,10 +588,10 @@ constructor(
         return null
     }
 
-    override fun dump(pw: PrintWriter, args: Array<out String>) {
-        pw.println("Region Samplers: ${regionSamplers.size}")
-        regionSamplers.map { (_, sampler) ->
-            sampler.dump(pw)
+    override fun dump(pw: PrintWriter, args: Array<out String>) = pw.asIndenting().run {
+        printCollection("Region Samplers", regionSamplers.values) {
+            it.dump(this)
         }
     }
 }
+

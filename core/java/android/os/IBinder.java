@@ -194,6 +194,7 @@ public interface IBinder {
      * Limit that should be placed on IPC sizes, in bytes, to keep them safely under the transaction
      * buffer limit.
      */
+    @android.ravenwood.annotation.RavenwoodKeep
     static int getSuggestedMaxIpcSizeBytes() {
         return MAX_IPC_SIZE;
     }
@@ -311,9 +312,11 @@ public interface IBinder {
         public void binderDied();
 
         /**
-         * @hide
+         * Interface for receiving a callback when the process hosting an IBinder
+         * has gone away.
+         * @param who The IBinder that has become invalid
          */
-        default void binderDied(IBinder who) {
+        default void binderDied(@NonNull IBinder who) {
             binderDied();
         }
     }

@@ -34,11 +34,9 @@ import android.util.Log;
 import android.view.RemoteAnimationAdapter;
 import android.view.WindowManagerGlobal;
 
+import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.settings.DisplayTracker;
 import com.android.systemui.shared.system.ActivityManagerWrapper;
-import com.android.systemui.statusbar.phone.CentralSurfaces;
-
-import java.util.Optional;
 
 import javax.inject.Inject;
 
@@ -49,20 +47,20 @@ import javax.inject.Inject;
 public class ActionProxyReceiver extends BroadcastReceiver {
     private static final String TAG = "ActionProxyReceiver";
 
-    private final CentralSurfaces mCentralSurfaces;
     private final ActivityManagerWrapper mActivityManagerWrapper;
     private final ScreenshotSmartActions mScreenshotSmartActions;
     private final DisplayTracker mDisplayTracker;
+    private final ActivityStarter mActivityStarter;
 
     @Inject
-    public ActionProxyReceiver(Optional<CentralSurfaces> centralSurfacesOptional,
-            ActivityManagerWrapper activityManagerWrapper,
+    public ActionProxyReceiver(ActivityManagerWrapper activityManagerWrapper,
             ScreenshotSmartActions screenshotSmartActions,
-            DisplayTracker displayTracker) {
-        mCentralSurfaces = centralSurfacesOptional.orElse(null);
+            DisplayTracker displayTracker,
+            ActivityStarter activityStarter) {
         mActivityManagerWrapper = activityManagerWrapper;
         mScreenshotSmartActions = screenshotSmartActions;
         mDisplayTracker = displayTracker;
+        mActivityStarter = activityStarter;
     }
 
     @Override
@@ -74,6 +72,8 @@ public class ActionProxyReceiver extends BroadcastReceiver {
             ActivityOptions opts = ActivityOptions.makeBasic();
             opts.setDisallowEnterPictureInPictureWhileLaunching(
                     intent.getBooleanExtra(EXTRA_DISALLOW_ENTER_PIP, false));
+            opts.setPendingIntentBackgroundActivityStartMode(
+                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED);
             try {
                 actionIntent.send(context, 0, null, null, null, null, opts.toBundle());
                 if (intent.getBooleanExtra(ScreenshotController.EXTRA_OVERRIDE_TRANSITION, false)) {
@@ -93,13 +93,9 @@ public class ActionProxyReceiver extends BroadcastReceiver {
 
         };
 
-        if (mCentralSurfaces != null) {
-            mCentralSurfaces.executeRunnableDismissingKeyguard(startActivityRunnable, null,
-                    true /* dismissShade */, true /* afterKeyguardGone */,
-                    true /* deferred */);
-        } else {
-            startActivityRunnable.run();
-        }
+        mActivityStarter.executeRunnableDismissingKeyguard(startActivityRunnable, null,
+                true /* dismissShade */, true /* afterKeyguardGone */,
+                true /* deferred */);
 
         if (intent.getBooleanExtra(EXTRA_SMART_ACTIONS_ENABLED, false)) {
             String action = intent.getAction();

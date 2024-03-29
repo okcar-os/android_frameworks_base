@@ -16,6 +16,7 @@
 
 package com.android.keyguard;
 
+import static android.view.View.INVISIBLE;
 import static android.view.View.VISIBLE;
 
 import static com.android.keyguard.KeyguardClockSwitch.LARGE;
@@ -39,10 +40,10 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.TextView;
 
-import com.android.systemui.R;
 import com.android.systemui.SysuiTestCase;
-import com.android.systemui.plugins.ClockController;
-import com.android.systemui.plugins.ClockFaceController;
+import com.android.systemui.plugins.clocks.ClockController;
+import com.android.systemui.plugins.clocks.ClockFaceController;
+import com.android.systemui.res.R;
 import com.android.systemui.statusbar.StatusBarState;
 
 import org.junit.Before;
@@ -72,6 +73,7 @@ public class KeyguardClockSwitchTest extends SysuiTestCase {
 
     private FrameLayout mSmallClockFrame;
     private FrameLayout mLargeClockFrame;
+    private KeyguardStatusAreaView mStatusArea;
 
     KeyguardClockSwitch mKeyguardClockSwitch;
 
@@ -109,6 +111,7 @@ public class KeyguardClockSwitchTest extends SysuiTestCase {
                 (KeyguardClockSwitch) layoutInflater.inflate(R.layout.keyguard_clock_switch, null);
         mSmallClockFrame = mKeyguardClockSwitch.findViewById(R.id.lockscreen_clock_view);
         mLargeClockFrame = mKeyguardClockSwitch.findViewById(R.id.lockscreen_clock_view_large);
+        mStatusArea = mKeyguardClockSwitch.findViewById(R.id.keyguard_status_area);
         mKeyguardClockSwitch.mChildrenAreLaidOut = true;
     }
 
@@ -185,10 +188,12 @@ public class KeyguardClockSwitchTest extends SysuiTestCase {
 
         mKeyguardClockSwitch.mClockInAnim.end();
         mKeyguardClockSwitch.mClockOutAnim.end();
+        mKeyguardClockSwitch.mStatusAreaAnim.end();
 
         assertThat(mLargeClockFrame.getAlpha()).isEqualTo(1);
         assertThat(mLargeClockFrame.getVisibility()).isEqualTo(VISIBLE);
         assertThat(mSmallClockFrame.getAlpha()).isEqualTo(0);
+        assertThat(mSmallClockFrame.getVisibility()).isEqualTo(INVISIBLE);
     }
 
     @Test
@@ -198,6 +203,7 @@ public class KeyguardClockSwitchTest extends SysuiTestCase {
         assertThat(mLargeClockFrame.getAlpha()).isEqualTo(1);
         assertThat(mLargeClockFrame.getVisibility()).isEqualTo(VISIBLE);
         assertThat(mSmallClockFrame.getAlpha()).isEqualTo(0);
+        assertThat(mSmallClockFrame.getVisibility()).isEqualTo(INVISIBLE);
     }
 
     @Test
@@ -206,12 +212,14 @@ public class KeyguardClockSwitchTest extends SysuiTestCase {
 
         mKeyguardClockSwitch.mClockInAnim.end();
         mKeyguardClockSwitch.mClockOutAnim.end();
+        mKeyguardClockSwitch.mStatusAreaAnim.end();
 
         assertThat(mSmallClockFrame.getAlpha()).isEqualTo(1);
         assertThat(mSmallClockFrame.getVisibility()).isEqualTo(VISIBLE);
         // only big clock is removed at switch
         assertThat(mLargeClockFrame.getParent()).isNull();
         assertThat(mLargeClockFrame.getAlpha()).isEqualTo(0);
+        assertThat(mLargeClockFrame.getVisibility()).isEqualTo(INVISIBLE);
     }
 
     @Test
@@ -223,7 +231,33 @@ public class KeyguardClockSwitchTest extends SysuiTestCase {
         // only big clock is removed at switch
         assertThat(mLargeClockFrame.getParent()).isNull();
         assertThat(mLargeClockFrame.getAlpha()).isEqualTo(0);
+        assertThat(mLargeClockFrame.getVisibility()).isEqualTo(INVISIBLE);
     }
+
+    @Test
+    public void switchingToSmallClockAnimation_resetsStatusArea() {
+        mKeyguardClockSwitch.switchToClock(SMALL, true);
+
+        mKeyguardClockSwitch.mClockInAnim.end();
+        mKeyguardClockSwitch.mClockOutAnim.end();
+        mKeyguardClockSwitch.mStatusAreaAnim.end();
+
+        assertThat(mStatusArea.getTranslationX()).isEqualTo(0);
+        assertThat(mStatusArea.getTranslationY()).isEqualTo(0);
+        assertThat(mStatusArea.getScaleX()).isEqualTo(1);
+        assertThat(mStatusArea.getScaleY()).isEqualTo(1);
+    }
+
+    @Test
+    public void switchingToSmallClockNoAnimation_resetsStatusArea() {
+        mKeyguardClockSwitch.switchToClock(SMALL, false);
+
+        assertThat(mStatusArea.getTranslationX()).isEqualTo(0);
+        assertThat(mStatusArea.getTranslationY()).isEqualTo(0);
+        assertThat(mStatusArea.getScaleX()).isEqualTo(1);
+        assertThat(mStatusArea.getScaleY()).isEqualTo(1);
+    }
+
 
     @Test
     public void switchingToBigClock_returnsTrueOnlyWhenItWasNotVisibleBefore() {

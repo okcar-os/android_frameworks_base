@@ -5,16 +5,23 @@ import android.os.UserHandle
 import android.testing.AndroidTestingRunner
 import androidx.test.filters.SmallTest
 import com.android.systemui.SysuiTestCase
-import com.android.systemui.flags.FeatureFlags
-import com.android.systemui.flags.Flags
+import com.android.systemui.mediaprojection.MediaProjectionMetricsLogger
 import com.android.systemui.mediaprojection.appselector.data.RecentTask
 import com.android.systemui.mediaprojection.appselector.data.RecentTaskListProvider
+import com.android.systemui.mediaprojection.appselector.data.RecentTaskThumbnailLoader
+import com.android.systemui.mediaprojection.devicepolicy.ScreenCaptureDevicePolicyResolver
+import com.android.systemui.shared.recents.model.ThumbnailData
+import com.android.systemui.util.mockito.any
 import com.android.systemui.util.mockito.mock
 import com.android.systemui.util.mockito.whenever
+import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.test.runTest
+import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.mockito.Mockito.never
 import org.mockito.Mockito.verify
 
 @RunWith(AndroidTestingRunner::class)
@@ -27,28 +34,40 @@ class MediaProjectionAppSelectorControllerTest : SysuiTestCase() {
     private val callerPackageName = "com.test.caller"
     private val callerComponentName = ComponentName(callerPackageName, "Caller")
 
-    private val hostUserHandle = UserHandle.of(123)
-    private val otherUserHandle = UserHandle.of(456)
+    private val personalUserHandle = UserHandle.of(123)
+    private val workUserHandle = UserHandle.of(456)
 
     private val view: MediaProjectionAppSelectorView = mock()
-    private val featureFlags: FeatureFlags = mock()
+    private val policyResolver: ScreenCaptureDevicePolicyResolver = mock()
+    private val logger = mock<MediaProjectionMetricsLogger>()
 
-    private val controller =
+    private val thumbnailLoader = FakeThumbnailLoader()
+
+    private fun createController(isFirstStart: Boolean = true, hostUid: Int = 123) =
         MediaProjectionAppSelectorController(
             taskListProvider,
             view,
-            featureFlags,
-            hostUserHandle,
+            policyResolver,
+            personalUserHandle,
             scope,
             appSelectorComponentName,
-            callerPackageName
+            callerPackageName,
+            thumbnailLoader,
+            isFirstStart,
+            logger,
+            hostUid,
         )
+
+    @Before
+    fun setup() {
+        givenCaptureAllowed(isAllow = true)
+    }
 
     @Test
     fun initNoRecentTasks_bindsEmptyList() {
         taskListProvider.tasks = emptyList()
 
-        controller.init()
+        createController().init()
 
         verify(view).bind(emptyList())
     }
@@ -57,9 +76,25 @@ class MediaProjectionAppSelectorControllerTest : SysuiTestCase() {
     fun initOneRecentTask_bindsList() {
         taskListProvider.tasks = listOf(createRecentTask(taskId = 1))
 
-        controller.init()
+        createController().init()
 
         verify(view).bind(listOf(createRecentTask(taskId = 1)))
+    }
+
+    @Test
+    fun init_refreshesThumbnailsOfForegroundTasks() = runTest {
+        val tasks =
+            listOf(
+                createRecentTask(taskId = 1, isForegroundTask = false),
+                createRecentTask(taskId = 2, isForegroundTask = true),
+                createRecentTask(taskId = 3, isForegroundTask = true),
+                createRecentTask(taskId = 4, isForegroundTask = false),
+            )
+        taskListProvider.tasks = tasks
+
+        createController().init()
+
+        assertThat(thumbnailLoader.capturedTaskIds).containsExactly(2, 3)
     }
 
     @Test
@@ -72,7 +107,7 @@ class MediaProjectionAppSelectorControllerTest : SysuiTestCase() {
             )
         taskListProvider.tasks = tasks
 
-        controller.init()
+        createController().init()
 
         verify(view)
             .bind(
@@ -95,7 +130,7 @@ class MediaProjectionAppSelectorControllerTest : SysuiTestCase() {
             )
         taskListProvider.tasks = tasks
 
-        controller.init()
+        createController().init()
 
         verify(view)
             .bind(
@@ -118,7 +153,7 @@ class MediaProjectionAppSelectorControllerTest : SysuiTestCase() {
             )
         taskListProvider.tasks = tasks
 
-        controller.init()
+        createController().init()
 
         verify(view)
             .bind(
@@ -132,76 +167,96 @@ class MediaProjectionAppSelectorControllerTest : SysuiTestCase() {
     }
 
     @Test
-    fun initRecentTasksWithAppSelectorTasks_enterprisePoliciesDisabled_bindsOnlyTasksWithHostProfile() {
-        givenEnterprisePoliciesFeatureFlag(enabled = false)
-
+    fun initRecentTasksWithAppSelectorTasks_withEnterprisePolicies_bindsAllTasks() {
         val tasks =
             listOf(
-                createRecentTask(taskId = 1, userId = hostUserHandle.identifier),
-                createRecentTask(taskId = 2, userId = otherUserHandle.identifier),
-                createRecentTask(taskId = 3, userId = hostUserHandle.identifier),
-                createRecentTask(taskId = 4, userId = otherUserHandle.identifier),
-                createRecentTask(taskId = 5, userId = hostUserHandle.identifier),
+                createRecentTask(taskId = 1, userId = personalUserHandle.identifier),
+                createRecentTask(taskId = 2, userId = workUserHandle.identifier),
+                createRecentTask(taskId = 3, userId = personalUserHandle.identifier),
+                createRecentTask(taskId = 4, userId = workUserHandle.identifier),
+                createRecentTask(taskId = 5, userId = personalUserHandle.identifier),
             )
         taskListProvider.tasks = tasks
 
-        controller.init()
+        createController().init()
 
         verify(view)
             .bind(
                 listOf(
-                    createRecentTask(taskId = 1, userId = hostUserHandle.identifier),
-                    createRecentTask(taskId = 3, userId = hostUserHandle.identifier),
-                    createRecentTask(taskId = 5, userId = hostUserHandle.identifier),
+                    createRecentTask(taskId = 1, userId = personalUserHandle.identifier),
+                    createRecentTask(taskId = 2, userId = workUserHandle.identifier),
+                    createRecentTask(taskId = 3, userId = personalUserHandle.identifier),
+                    createRecentTask(taskId = 4, userId = workUserHandle.identifier),
+                    createRecentTask(taskId = 5, userId = personalUserHandle.identifier),
                 )
             )
     }
 
     @Test
-    fun initRecentTasksWithAppSelectorTasks_enterprisePoliciesEnabled_bindsAllTasks() {
-        givenEnterprisePoliciesFeatureFlag(enabled = true)
-
+    fun initRecentTasksWithAppSelectorTasks_withEnterprisePolicies_blocksAllTasks() {
         val tasks =
             listOf(
-                createRecentTask(taskId = 1, userId = hostUserHandle.identifier),
-                createRecentTask(taskId = 2, userId = otherUserHandle.identifier),
-                createRecentTask(taskId = 3, userId = hostUserHandle.identifier),
-                createRecentTask(taskId = 4, userId = otherUserHandle.identifier),
-                createRecentTask(taskId = 5, userId = hostUserHandle.identifier),
+                createRecentTask(taskId = 1, userId = personalUserHandle.identifier),
+                createRecentTask(taskId = 2, userId = workUserHandle.identifier),
+                createRecentTask(taskId = 3, userId = personalUserHandle.identifier),
+                createRecentTask(taskId = 4, userId = workUserHandle.identifier),
+                createRecentTask(taskId = 5, userId = personalUserHandle.identifier),
             )
         taskListProvider.tasks = tasks
 
-        controller.init()
+        givenCaptureAllowed(isAllow = false)
+        createController().init()
 
-        // TODO(b/233348916) should filter depending on the policies
-        verify(view)
-            .bind(
-                listOf(
-                    createRecentTask(taskId = 1, userId = hostUserHandle.identifier),
-                    createRecentTask(taskId = 2, userId = otherUserHandle.identifier),
-                    createRecentTask(taskId = 3, userId = hostUserHandle.identifier),
-                    createRecentTask(taskId = 4, userId = otherUserHandle.identifier),
-                    createRecentTask(taskId = 5, userId = hostUserHandle.identifier),
-                )
-            )
+        verify(view).bind(emptyList())
     }
 
-    private fun givenEnterprisePoliciesFeatureFlag(enabled: Boolean) {
-        whenever(featureFlags.isEnabled(Flags.WM_ENABLE_PARTIAL_SCREEN_SHARING_ENTERPRISE_POLICIES))
-            .thenReturn(enabled)
+    @Test
+    fun init_firstStart_logsAppSelectorDisplayed() {
+        val hostUid = 123456789
+        val controller = createController(isFirstStart = true, hostUid)
+
+        controller.init()
+
+        verify(logger).notifyAppSelectorDisplayed(hostUid)
+    }
+
+    @Test
+    fun init_notFirstStart_doesNotLogAppSelectorDisplayed() {
+        val hostUid = 123456789
+        val controller = createController(isFirstStart = false, hostUid)
+
+        controller.init()
+
+        verify(logger, never()).notifyAppSelectorDisplayed(hostUid)
+    }
+
+    @Test
+    fun onSelectorDismissed_logsProjectionRequestCancelled() {
+        val hostUid = 123
+
+        createController(hostUid = hostUid).onSelectorDismissed()
+
+        verify(logger).notifyProjectionRequestCancelled(hostUid)
+    }
+
+    private fun givenCaptureAllowed(isAllow: Boolean) {
+        whenever(policyResolver.isScreenCaptureAllowed(any(), any())).thenReturn(isAllow)
     }
 
     private fun createRecentTask(
         taskId: Int,
         topActivityComponent: ComponentName? = null,
-        userId: Int = hostUserHandle.identifier
+        userId: Int = personalUserHandle.identifier,
+        isForegroundTask: Boolean = false
     ): RecentTask {
         return RecentTask(
             taskId = taskId,
+            displayId = 0,
             topActivityComponent = topActivityComponent,
             baseIntentComponent = ComponentName("com", "Test"),
             userId = userId,
-            colorBackground = 0
+            colorBackground = 0,
+            isForegroundTask = isForegroundTask,
         )
     }
 
@@ -210,5 +265,19 @@ class MediaProjectionAppSelectorControllerTest : SysuiTestCase() {
         var tasks: List<RecentTask> = emptyList()
 
         override suspend fun loadRecentTasks(): List<RecentTask> = tasks
+    }
+
+    private class FakeThumbnailLoader : RecentTaskThumbnailLoader {
+
+        val capturedTaskIds = mutableListOf<Int>()
+
+        override suspend fun loadThumbnail(taskId: Int): ThumbnailData? {
+            return null
+        }
+
+        override suspend fun captureThumbnail(taskId: Int): ThumbnailData? {
+            capturedTaskIds += taskId
+            return null
+        }
     }
 }

@@ -72,7 +72,9 @@ public final class Prefs {
             Key.HAS_SEEN_ACCESSIBILITY_FLOATING_MENU_DOCK_TOOLTIP,
             Key.ACCESSIBILITY_FLOATING_MENU_POSITION,
             Key.HAS_CLICKED_NUDGE_TO_SETUP_DREAM,
-            Key.HAS_DISMISSED_NUDGE_TO_SETUP_DREAM
+            Key.HAS_DISMISSED_NUDGE_TO_SETUP_DREAM,
+            Key.HAS_ACCESSIBILITY_FLOATING_MENU_TUCKED,
+            Key.BLUETOOTH_TILE_DIALOG_CONTENT_HEIGHT,
     })
     // TODO: annotate these with their types so {@link PrefsCommandLine} can know how to set them
     public @interface Key {
@@ -117,6 +119,8 @@ public final class Prefs {
         String ACCESSIBILITY_FLOATING_MENU_POSITION = "AccessibilityFloatingMenuPosition";
         String HAS_CLICKED_NUDGE_TO_SETUP_DREAM = "HasClickedNudgeToSetupDream";
         String HAS_DISMISSED_NUDGE_TO_SETUP_DREAM = "HasDismissedNudgeToSetupDream";
+        String HAS_ACCESSIBILITY_FLOATING_MENU_TUCKED = "HasAccessibilityFloatingMenuTucked";
+        String BLUETOOTH_TILE_DIALOG_CONTENT_HEIGHT = "BluetoothTileDialogContentHeight";
     }
 
     public static boolean getBoolean(Context context, @Key String key, boolean defaultValue) {

@@ -16,6 +16,7 @@
 
 package android.net;
 
+import static android.app.ActivityManager.PROCESS_STATE_UNKNOWN;
 import static android.app.ActivityManager.procStateToString;
 import static android.content.pm.PackageManager.GET_SIGNATURES;
 
@@ -97,9 +98,6 @@ public class NetworkPolicyManager {
      */
     public static final int POLICY_REJECT_WIFI = 0x8000;
     /** Reject network usage on all networks
-     * Not used since 12, since we now use restricted-networking-mode
-     * However, since this was present in earlier builds, keep it around
-     * to help with migration, and as a reminder that this value should not be re-used.
      * @hide
      */
     public static final int POLICY_REJECT_ALL = 0x40000;
@@ -409,6 +407,17 @@ public class NetworkPolicyManager {
     }
 
     /** @hide */
+    @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+    @RequiresPermission(NetworkStack.PERMISSION_MAINLINE_NETWORK_STACK)
+    public void notifyDenylistChanged(@NonNull int[] uidsAdded, @NonNull int[] uidsRemoved) {
+        try {
+            mService.notifyDenylistChanged(uidsAdded, uidsRemoved);
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
+
+    /** @hide */
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.P, trackingBug = 115609023)
     public void registerListener(INetworkPolicyListener listener) {
         try {
@@ -501,8 +510,8 @@ public class NetworkPolicyManager {
      *
      * @param uid The UID whose status needs to be checked.
      * @return {@link ConnectivityManager#RESTRICT_BACKGROUND_STATUS_DISABLED},
-     *         {@link ConnectivityManager##RESTRICT_BACKGROUND_STATUS_ENABLED},
-     *         or {@link ConnectivityManager##RESTRICT_BACKGROUND_STATUS_WHITELISTED} to denote
+     *         {@link ConnectivityManager#RESTRICT_BACKGROUND_STATUS_ENABLED},
+     *         or {@link ConnectivityManager#RESTRICT_BACKGROUND_STATUS_WHITELISTED} to denote
      *         the current status of the UID.
      * @hide
      */
@@ -795,6 +804,28 @@ public class NetworkPolicyManager {
     }
 
     /**
+     * Returns the default network capabilities
+     * ({@link ActivityManager#PROCESS_CAPABILITY_POWER_RESTRICTED_NETWORK
+     * ActivityManager.PROCESS_CAPABILITY_*}) of the specified process state.
+     * This <b>DOES NOT</b> return all default process capabilities for a proc state.
+     * @hide
+     */
+    public static int getDefaultProcessNetworkCapabilities(int procState) {
+        switch (procState) {
+            case ActivityManager.PROCESS_STATE_PERSISTENT:
+            case ActivityManager.PROCESS_STATE_PERSISTENT_UI:
+            case ActivityManager.PROCESS_STATE_TOP:
+            case ActivityManager.PROCESS_STATE_BOUND_TOP:
+            case ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE:
+            case ActivityManager.PROCESS_STATE_BOUND_FOREGROUND_SERVICE:
+                return ActivityManager.PROCESS_CAPABILITY_POWER_RESTRICTED_NETWORK
+                        | ActivityManager.PROCESS_CAPABILITY_USER_RESTRICTED_NETWORK;
+            default:
+                return ActivityManager.PROCESS_CAPABILITY_NONE;
+        }
+    }
+
+    /**
      * Returns true if {@param procState} is considered foreground and as such will be allowed
      * to access network when the device is idle or in battery saver mode. Otherwise, false.
      * @hide
@@ -809,8 +840,11 @@ public class NetworkPolicyManager {
     /** @hide */
     public static boolean isProcStateAllowedWhileIdleOrPowerSaveMode(
             int procState, @ProcessCapability int capability) {
+        if (procState == PROCESS_STATE_UNKNOWN) {
+            return false;
+        }
         return procState <= FOREGROUND_THRESHOLD_STATE
-                || (capability & ActivityManager.PROCESS_CAPABILITY_NETWORK) != 0;
+                || (capability & ActivityManager.PROCESS_CAPABILITY_POWER_RESTRICTED_NETWORK) != 0;
     }
 
     /** @hide */
@@ -830,13 +864,21 @@ public class NetworkPolicyManager {
         if (uidState == null) {
             return false;
         }
-        return isProcStateAllowedWhileOnRestrictBackground(uidState.procState);
+        return isProcStateAllowedWhileOnRestrictBackground(uidState.procState, uidState.capability);
     }
 
     /** @hide */
-    public static boolean isProcStateAllowedWhileOnRestrictBackground(int procState) {
-        // Data saver and bg policy restrictions will only take procstate into account.
-        return procState <= FOREGROUND_THRESHOLD_STATE;
+    public static boolean isProcStateAllowedWhileOnRestrictBackground(int procState,
+            @ProcessCapability int capabilities) {
+        if (procState == PROCESS_STATE_UNKNOWN) {
+            return false;
+        }
+        return procState <= FOREGROUND_THRESHOLD_STATE
+                // This is meant to be a user-initiated job, and therefore gets similar network
+                // access to FGS.
+                || (procState <= ActivityManager.PROCESS_STATE_IMPORTANT_FOREGROUND
+                        && (capabilities
+                              & ActivityManager.PROCESS_CAPABILITY_USER_RESTRICTED_NETWORK) != 0);
     }
 
     /** @hide */
@@ -959,6 +1001,11 @@ public class NetworkPolicyManager {
          */
         @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
         default void onUidBlockedReasonChanged(int uid, int blockedReasons) {}
+
+        /** @hide */
+        @SystemApi(client = SystemApi.Client.MODULE_LIBRARIES)
+        default void onUidsAllowedTransportsChanged(@NonNull int[] uids,
+                @NonNull long[] allowedTransports) {}
     }
 
     /** @hide */
@@ -978,6 +1025,11 @@ public class NetworkPolicyManager {
                 dispatchOnUidBlockedReasonChanged(mExecutor, mCallback, uid, newBlockedReasons);
             }
         }
+
+        @Override
+        public void onAllowedTransportsChanged(int[] uids, long[] allowedTransports) {
+            dispatchOnUidsAllowedTransportsChanged(mExecutor, mCallback, uids, allowedTransports);
+        }
     }
 
     private static void dispatchOnUidBlockedReasonChanged(@Nullable Executor executor,
@@ -988,6 +1040,17 @@ public class NetworkPolicyManager {
             executor.execute(PooledLambda.obtainRunnable(
                     NetworkPolicyCallback::onUidBlockedReasonChanged,
                     callback, uid, blockedReasons).recycleOnUse());
+        }
+    }
+
+    private static void dispatchOnUidsAllowedTransportsChanged(@Nullable Executor executor,
+            @NonNull NetworkPolicyCallback callback, int[] uids, long[] allowedTransports) {
+        if (executor == null) {
+            callback.onUidsAllowedTransportsChanged(uids, allowedTransports);
+        } else {
+            executor.execute(PooledLambda.obtainRunnable(
+                    NetworkPolicyCallback::onUidsAllowedTransportsChanged,
+                    callback, uids, allowedTransports).recycleOnUse());
         }
     }
 
@@ -1047,5 +1110,6 @@ public class NetworkPolicyManager {
         @Override public void onSubscriptionPlansChanged(int subId, SubscriptionPlan[] plans) { }
         @Override public void onBlockedReasonChanged(int uid,
                 int oldBlockedReasons, int newBlockedReasons) { }
+        @Override public void onAllowedTransportsChanged(int[] uids, long[] allowedTransports) { }
     }
 }

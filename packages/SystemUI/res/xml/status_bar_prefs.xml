@@ -20,11 +20,6 @@
 
     <com.android.systemui.tuner.StatusBarSwitch
         android:icon="@drawable/ic_statusbar_auto_rotate"
-        android:key="rotate_toggle"
-        android:title="@string/status_bar_settings_rotation_toggle" />
-
-    <com.android.systemui.tuner.StatusBarSwitch
-        android:icon="@drawable/ic_statusbar_auto_rotate"
         android:key="rotate"
         android:title="@string/status_bar_settings_auto_rotation" />
 

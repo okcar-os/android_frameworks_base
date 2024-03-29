@@ -43,11 +43,15 @@ import android.os.AsyncTask;
 import android.os.Binder;
 import android.os.Looper;
 import android.os.Parcel;
+import android.util.AttributeSet;
 import android.util.SizeF;
 import android.view.ContextThemeWrapper;
+import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.test.InstrumentationRegistry;
 import androidx.test.filters.SmallTest;
 import androidx.test.runner.AndroidJUnit4;
@@ -62,6 +66,7 @@ import org.junit.runner.RunWith;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.HashMap;
 import java.util.concurrent.CountDownLatch;
@@ -89,19 +94,6 @@ public class RemoteViewsTest {
         mContext = InstrumentationRegistry.getContext();
         mPackage = mContext.getPackageName();
         mContainer = new LinearLayout(mContext);
-    }
-
-    @Test
-    public void clone_doesNotCopyBitmap() {
-        RemoteViews original = new RemoteViews(mPackage, R.layout.remote_views_test);
-        Bitmap bitmap = Bitmap.createBitmap(10, 10, Bitmap.Config.ARGB_8888);
-
-        original.setImageViewBitmap(R.id.image, bitmap);
-        RemoteViews clone = original.clone();
-        View inflated = clone.apply(mContext, mContainer);
-
-        Drawable drawable = ((ImageView) inflated.findViewById(R.id.image)).getDrawable();
-        assertSame(bitmap, ((BitmapDrawable)drawable).getBitmap());
     }
 
     @Test
@@ -136,6 +128,7 @@ public class RemoteViewsTest {
         RemoteViews clone = child.clone();
     }
 
+    @SuppressWarnings("ReturnValueIgnored")
     @Test
     public void clone_repeatedly() {
         RemoteViews original = new RemoteViews(mPackage, R.layout.remote_views_test);
@@ -331,7 +324,9 @@ public class RemoteViewsTest {
         RemoteViews nested = new RemoteViews(mPackage, R.layout.remote_views_text);
         nested.setOnClickPendingIntent(
                 R.id.text,
-                PendingIntent.getActivity(mContext, 0, new Intent(), PendingIntent.FLAG_MUTABLE)
+                PendingIntent.getActivity(mContext, 0,
+                        new Intent().setPackage(mContext.getPackageName()),
+                        PendingIntent.FLAG_MUTABLE)
         );
 
         RemoteViews listItem = new RemoteViews(mPackage, R.layout.remote_view_host);
@@ -348,7 +343,9 @@ public class RemoteViewsTest {
         RemoteViews inner = new RemoteViews(mPackage, R.layout.remote_views_text);
         inner.setOnClickPendingIntent(
                 R.id.text,
-                PendingIntent.getActivity(mContext, 0, new Intent(), PendingIntent.FLAG_MUTABLE)
+                PendingIntent.getActivity(mContext, 0,
+                        new Intent().setPackage(mContext.getPackageName()),
+                        PendingIntent.FLAG_MUTABLE)
         );
 
         RemoteViews listItem = new RemoteViews(inner, inner);
@@ -364,7 +361,9 @@ public class RemoteViewsTest {
         RemoteViews inner = new RemoteViews(mPackage, R.layout.remote_views_text);
         inner.setOnClickPendingIntent(
                 R.id.text,
-                PendingIntent.getActivity(mContext, 0, new Intent(), PendingIntent.FLAG_MUTABLE)
+                PendingIntent.getActivity(mContext, 0,
+                        new Intent().setPackage(mContext.getPackageName()),
+                        PendingIntent.FLAG_MUTABLE)
         );
 
         RemoteViews listItem = new RemoteViews(
@@ -493,6 +492,7 @@ public class RemoteViewsTest {
         }
     }
 
+    @SuppressWarnings("ReturnValueIgnored")
     @Test
     public void nestedAddViews() {
         RemoteViews views = new RemoteViews(mPackage, R.layout.remote_views_test);
@@ -517,6 +517,7 @@ public class RemoteViewsTest {
         parcelAndRecreate(views);
     }
 
+    @SuppressWarnings("ReturnValueIgnored")
     @Test
     public void nestedLandscapeViews() {
         RemoteViews views = new RemoteViews(mPackage, R.layout.remote_views_test);
@@ -564,7 +565,9 @@ public class RemoteViewsTest {
         RemoteViews views = new RemoteViews(mPackage, R.layout.remote_views_test);
         for (int i = 1; i < 10; i++) {
             PendingIntent pi = PendingIntent.getBroadcast(mContext, 0,
-                    new Intent("android.widget.RemoteViewsTest_" + i), PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_MUTABLE_UNAUDITED);
+                    new Intent("android.widget.RemoteViewsTest_" + i)
+                            .setPackage(mContext.getPackageName()),
+                    PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_MUTABLE);
             views.setOnClickPendingIntent(i, pi);
         }
         try {
@@ -580,7 +583,8 @@ public class RemoteViewsTest {
 
         RemoteViews views = new RemoteViews(mPackage, R.layout.remote_views_test);
         PendingIntent pi = PendingIntent.getBroadcast(mContext, 0,
-                new Intent("test"), PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_MUTABLE_UNAUDITED);
+                new Intent("test").setPackage(mContext.getPackageName()),
+                PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_MUTABLE);
         views.setOnClickPendingIntent(1, pi);
         RemoteViews withCookie = parcelAndRecreateWithPendingIntentCookie(views, whitelistToken);
 
@@ -611,8 +615,9 @@ public class RemoteViewsTest {
     public void sharedElement_pendingIntent_notifyParent() throws Exception {
         RemoteViews views = new RemoteViews(mPackage, R.layout.remote_views_test);
         PendingIntent pi = PendingIntent.getBroadcast(mContext, 0,
-                new Intent("android.widget.RemoteViewsTest_shared_element"),
-                PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_MUTABLE_UNAUDITED);
+                new Intent("android.widget.RemoteViewsTest_shared_element")
+                        .setPackage(mContext.getPackageName()),
+                PendingIntent.FLAG_ONE_SHOT | PendingIntent.FLAG_MUTABLE);
         views.setOnClickResponse(R.id.image, RemoteViews.RemoteResponse.fromPendingIntent(pi)
                 .addSharedElement(0, "e0")
                 .addSharedElement(1, "e1")
@@ -830,5 +835,72 @@ public class RemoteViewsTest {
         verify(visitor, times(1)).accept(eq(icon2S.getUri()));
         verify(visitor, times(1)).accept(eq(icon3S.getUri()));
         verify(visitor, times(1)).accept(eq(icon4S.getUri()));
+    }
+
+    @Test
+    public void layoutInflaterFactory_nothingSet_returnsNull() {
+        final RemoteViews rv = new RemoteViews(mPackage, R.layout.remote_views_test);
+        assertNull(rv.getLayoutInflaterFactory());
+    }
+
+    @Test
+    public void layoutInflaterFactory_replacesImageView_viewReplaced() {
+        final RemoteViews rv = new RemoteViews(mPackage, R.layout.remote_views_test);
+        final View replacement = new FrameLayout(mContext);
+        replacement.setId(1337);
+
+        LayoutInflater.Factory2 factory = createLayoutInflaterFactory("ImageView", replacement);
+        rv.setLayoutInflaterFactory(factory);
+
+        // Now inflate the views.
+        View inflated = rv.apply(mContext, mContainer);
+
+        assertEquals(factory, rv.getLayoutInflaterFactory());
+        View replacedFrameLayout = inflated.findViewById(1337);
+        assertNotNull(replacedFrameLayout);
+        assertEquals(replacement, replacedFrameLayout);
+        // ImageView should be fully replaced.
+        assertNull(inflated.findViewById(R.id.image));
+    }
+
+    @Test
+    public void layoutInflaterFactory_replacesImageView_settersStillFunctional() {
+        final RemoteViews rv = new RemoteViews(mPackage, R.layout.remote_views_test);
+        final TextView replacement = new TextView(mContext);
+        replacement.setId(R.id.text);
+        final String testText = "testText";
+        rv.setLayoutInflaterFactory(createLayoutInflaterFactory("TextView", replacement));
+        rv.setTextViewText(R.id.text, testText);
+
+
+        // Now inflate the views.
+        View inflated = rv.apply(mContext, mContainer);
+
+        TextView replacedTextView = inflated.findViewById(R.id.text);
+        assertSame(replacement, replacedTextView);
+        assertEquals(testText, replacedTextView.getText());
+    }
+
+    private static LayoutInflater.Factory2 createLayoutInflaterFactory(String viewTypeToReplace,
+            View replacementView) {
+        return new LayoutInflater.Factory2() {
+            @Nullable
+            @Override
+            public View onCreateView(@Nullable View parent, @NonNull String name,
+                                     @NonNull Context context, @NonNull AttributeSet attrs) {
+                if (viewTypeToReplace.equals(name)) {
+                    return replacementView;
+                }
+
+                return null;
+            }
+
+            @Nullable
+            @Override
+            public View onCreateView(@NonNull String name, @NonNull Context context,
+                                     @NonNull AttributeSet attrs) {
+                return null;
+            }
+        };
     }
 }

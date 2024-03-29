@@ -74,7 +74,7 @@ import android.widget.TextView;
 
 import com.android.internal.logging.MetricsLogger;
 import com.android.settingslib.notification.ConversationIconFactory;
-import com.android.systemui.R;
+import com.android.systemui.res.R;
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.people.widget.PeopleSpaceWidgetManager;
 import com.android.systemui.shade.ShadeController;
@@ -1290,7 +1290,6 @@ public class NotificationConversationInfoTest extends SysuiTestCase {
         //WHEN channel is default importance
         mNotificationChannel.setImportantConversation(false);
         mNotificationInfo.bindNotification(
-                -1,
                 mShortcutManager,
                 mMockPackageManager,
                 mUserManager,

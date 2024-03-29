@@ -16,22 +16,6 @@
 
 #pragma once
 
-#include "DamageAccumulator.h"
-#include "FrameInfo.h"
-#include "FrameInfoVisualizer.h"
-#include "FrameMetricsReporter.h"
-#include "IContextFactory.h"
-#include "IRenderPipeline.h"
-#include "JankTracker.h"
-#include "LayerUpdateQueue.h"
-#include "Lighting.h"
-#include "ReliableSurface.h"
-#include "RenderNode.h"
-#include "renderthread/RenderTask.h"
-#include "renderthread/RenderThread.h"
-#include "utils/RingBuffer.h"
-#include "ColorMode.h"
-
 #include <SkBitmap.h>
 #include <SkRect.h>
 #include <SkSize.h>
@@ -45,6 +29,25 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+#include "ColorMode.h"
+#include "DamageAccumulator.h"
+#include "FrameInfo.h"
+#include "FrameInfoVisualizer.h"
+#include "FrameMetricsReporter.h"
+#include "HintSessionWrapper.h"
+#include "IContextFactory.h"
+#include "IRenderPipeline.h"
+#include "JankTracker.h"
+#include "LayerUpdateQueue.h"
+#include "Lighting.h"
+#include "ReliableSurface.h"
+#include "RenderNode.h"
+#include "renderstate/RenderState.h"
+#include "renderthread/RenderTask.h"
+#include "renderthread/RenderThread.h"
+#include "utils/ForceDark.h"
+#include "utils/RingBuffer.h"
 
 namespace android {
 namespace uirenderer {
@@ -63,10 +66,11 @@ class Frame;
 // This per-renderer class manages the bridge between the global EGL context
 // and the render surface.
 // TODO: Rename to Renderer or some other per-window, top-level manager
-class CanvasContext : public IFrameCallback {
+class CanvasContext : public IFrameCallback, public IGpuContextCallback {
 public:
     static CanvasContext* create(RenderThread& thread, bool translucent, RenderNode* rootRenderNode,
-                                 IContextFactory* contextFactory);
+                                 IContextFactory* contextFactory, pid_t uiThreadId,
+                                 pid_t renderThreadId);
     virtual ~CanvasContext();
 
     /**
@@ -123,21 +127,25 @@ public:
     // Won't take effect until next EGLSurface creation
     void setSwapBehavior(SwapBehavior swapBehavior);
 
+    void setHardwareBuffer(AHardwareBuffer* buffer);
     void setSurface(ANativeWindow* window, bool enableTimeout = true);
     void setSurfaceControl(ASurfaceControl* surfaceControl);
     bool pauseSurface();
     void setStopped(bool stopped);
-    bool hasSurface() const { return mNativeSurface.get(); }
+    bool isStopped() { return mStopped || !hasOutputTarget(); }
+    bool hasOutputTarget() const { return mNativeSurface.get() || mHardwareBuffer; }
     void allocateBuffers();
 
     void setLightAlpha(uint8_t ambientShadowAlpha, uint8_t spotShadowAlpha);
     void setLightGeometry(const Vector3& lightCenter, float lightRadius);
     void setOpaque(bool opaque);
-    void setColorMode(ColorMode mode);
+    float setColorMode(ColorMode mode);
+    float targetSdrHdrRatio() const;
+    void setTargetSdrHdrRatio(float ratio);
     bool makeCurrent();
     void prepareTree(TreeInfo& info, int64_t* uiFrameInfo, int64_t syncQueued, RenderNode* target);
     // Returns the DequeueBufferDuration.
-    nsecs_t draw();
+    void draw(bool solelyTextureViewUpdates);
     void destroy();
 
     // IFrameCallback, Choreographer-driven frame callback entry point
@@ -148,7 +156,7 @@ public:
     void markLayerInUse(RenderNode* node);
 
     void destroyHardwareResources();
-    static void trimMemory(RenderThread& thread, int level);
+    void onContextDestroyed() override;
 
     DeferredLayerUpdater* createTextureLayer();
 
@@ -187,11 +195,9 @@ public:
         mRenderPipeline->setPictureCapturedCallback(callback);
     }
 
-    void setForceDark(bool enable) { mUseForceDark = enable; }
+    void setForceDark(ForceDarkType type) { mForceDarkType = type; }
 
-    bool useForceDark() {
-        return mUseForceDark;
-    }
+    ForceDarkType getForceDarkType() { return mForceDarkType; }
 
     SkISize getNextFrameSize() const;
 
@@ -207,6 +213,10 @@ public:
         mASurfaceTransactionCallback = callback;
     }
 
+    void setHardwareBufferRenderParams(const HardwareBufferRenderParams& params) {
+        mBufferParams = params;
+    }
+
     bool mergeTransaction(ASurfaceTransaction* transaction, ASurfaceControl* control);
 
     void setPrepareSurfaceControlForWebviewCallback(const std::function<void()>& callback) {
@@ -217,9 +227,22 @@ public:
 
     static CanvasContext* getActiveContext();
 
+    void sendLoadResetHint();
+
+    void sendLoadIncreaseHint();
+
+    void setSyncDelayDuration(nsecs_t duration);
+
+    void startHintSession();
+
+    static bool shouldDither();
+
+    void visitAllRenderNodes(std::function<void(const RenderNode&)>) const;
+
 private:
     CanvasContext(RenderThread& thread, bool translucent, RenderNode* rootRenderNode,
-                  IContextFactory* contextFactory, std::unique_ptr<IRenderPipeline> renderPipeline);
+                  IContextFactory* contextFactory, std::unique_ptr<IRenderPipeline> renderPipeline,
+                  pid_t uiThreadId, pid_t renderThreadId);
 
     friend class RegisterFrameCallbackTask;
     // TODO: Replace with something better for layer & other GL object
@@ -249,11 +272,16 @@ private:
 
     FrameInfo* getFrameInfoFromLast4(uint64_t frameNumber, uint32_t surfaceControlId);
 
+    Frame getFrame();
+
     // The same type as Frame.mWidth and Frame.mHeight
     int32_t mLastFrameWidth = 0;
     int32_t mLastFrameHeight = 0;
 
     RenderThread& mRenderThread;
+
+    AHardwareBuffer* mHardwareBuffer = nullptr;
+    HardwareBufferRenderParams mBufferParams;
     std::unique_ptr<ReliableSurface> mNativeSurface;
     // The SurfaceControl reference is passed from ViewRootImpl, can be set to
     // NULL to remove the reference
@@ -292,7 +320,7 @@ private:
     nsecs_t mLastDropVsync = 0;
 
     bool mOpaque;
-    bool mUseForceDark = false;
+    ForceDarkType mForceDarkType = ForceDarkType::NONE;
     LightInfo mLightInfo;
     LightGeometry mLightGeometry = {{0, 0, 0}, 0};
 
@@ -334,7 +362,19 @@ private:
     std::function<bool(int64_t, int64_t, int64_t)> mASurfaceTransactionCallback;
     std::function<void()> mPrepareSurfaceControlForWebviewCallback;
 
-    void cleanupResources();
+    std::shared_ptr<HintSessionWrapper> mHintSessionWrapper;
+    nsecs_t mLastDequeueBufferDuration = 0;
+    nsecs_t mSyncDelayDuration = 0;
+    nsecs_t mIdleDuration = 0;
+
+    ColorMode mColorMode = ColorMode::Default;
+    float mTargetSdrHdrRatio = 1.f;
+
+    struct SkippedFrameInfo {
+        int64_t vsyncId;
+        int64_t startTime;
+    };
+    std::optional<SkippedFrameInfo> mSkippedFrameInfo;
 };
 
 } /* namespace renderthread */

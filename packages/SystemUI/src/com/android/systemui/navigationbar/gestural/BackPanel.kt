@@ -121,6 +121,8 @@ class BackPanel(
             maximumValue = 1f
     )
 
+    var triggerLongSwipe = false
+
     private val allAnimatedFloat = setOf(
             arrowLength,
             arrowHeight,
@@ -156,19 +158,19 @@ class BackPanel(
                 Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
 
         arrowPaint.color = Utils.getColorAttrDefaultColor(context,
-            if (isDeviceInNightTheme) {
-                com.android.internal.R.attr.colorAccentPrimary
-            } else {
-                com.android.internal.R.attr.textColorPrimary
-            }
+                if (isDeviceInNightTheme) {
+                    com.android.internal.R.attr.materialColorOnSecondaryContainer
+                } else {
+                    com.android.internal.R.attr.materialColorOnSecondaryFixed
+                }
         )
 
         arrowBackgroundPaint.color = Utils.getColorAttrDefaultColor(context,
-            if (isDeviceInNightTheme) {
-                com.android.internal.R.attr.colorSurface
-            } else {
-                com.android.internal.R.attr.colorAccentSecondary
-            }
+                if (isDeviceInNightTheme) {
+                    com.android.internal.R.attr.materialColorSecondaryContainer
+                } else {
+                    com.android.internal.R.attr.materialColorSecondaryFixedDim
+                }
         )
     }
 
@@ -293,6 +295,9 @@ class BackPanel(
         arrowPath.lineTo(0f, 0f)
         arrowPath.lineTo(dx, dy)
         arrowPath.moveTo(dx, -dy)
+        if (triggerLongSwipe) {
+            arrowPath.addPath(arrowPath, arrowPaint.strokeWidth * 2.0f * -1, 0.0f)
+        }
         return arrowPath
     }
 
@@ -363,12 +368,8 @@ class BackPanel(
     }
 
     fun popOffEdge(startingVelocity: Float) {
-        val heightStretchAmount = startingVelocity * 50
-        val widthStretchAmount = startingVelocity * 150
-        val scaleStretchAmount = startingVelocity * 0.8f
-        backgroundHeight.stretchTo(stretchAmount = 0f, startingVelocity = -heightStretchAmount)
-        backgroundWidth.stretchTo(stretchAmount = 0f, startingVelocity = widthStretchAmount)
-        scale.stretchTo(stretchAmount = 0f, startingVelocity = -scaleStretchAmount)
+        scale.stretchTo(stretchAmount = 0f, startingVelocity = startingVelocity * -.8f)
+        horizontalTranslation.stretchTo(stretchAmount = 0f, startingVelocity * 200f)
     }
 
     fun popScale(startingVelocity: Float) {
@@ -410,7 +411,7 @@ class BackPanel(
         arrowAlpha.updateRestingPosition(restingParams.arrowDimens.alpha, animate)
         arrowLength.updateRestingPosition(restingParams.arrowDimens.length, animate)
         arrowHeight.updateRestingPosition(restingParams.arrowDimens.height, animate)
-        scalePivotX.updateRestingPosition(restingParams.backgroundDimens.width, animate)
+        scalePivotX.updateRestingPosition(restingParams.scalePivotX, animate)
         backgroundWidth.updateRestingPosition(restingParams.backgroundDimens.width, animate)
         backgroundHeight.updateRestingPosition(restingParams.backgroundDimens.height, animate)
         backgroundEdgeCornerRadius.updateRestingPosition(
@@ -506,6 +507,9 @@ class BackPanel(
         val arrowPath = calculateArrowPath(dx = dx, dy = dy)
         val arrowPaint = arrowPaint
                 .apply { alpha = (255 * min(arrowAlpha.pos, backgroundAlpha.pos)).toInt() }
+        if (isLeftPanel) {
+            canvas.scale(-1f, 1f, dx / 2f, dy / 2f)
+        }
         canvas.drawPath(arrowPath, arrowPaint)
         canvas.restore()
 

@@ -39,13 +39,13 @@ import android.os.Process;
 import android.os.UserHandle;
 import android.provider.MediaStore;
 import android.testing.AndroidTestingRunner;
+import android.view.Display;
 
 import androidx.exifinterface.media.ExifInterface;
 import androidx.test.filters.MediumTest;
 
 import com.android.systemui.SysuiTestCase;
 import com.android.systemui.flags.FakeFeatureFlags;
-import com.android.systemui.flags.Flags;
 
 import com.google.common.util.concurrent.ListenableFuture;
 
@@ -75,7 +75,7 @@ public class ImageExporterTest extends SysuiTestCase {
     private static final byte[] EXIF_FILE_TAG = "Exif\u0000\u0000".getBytes(US_ASCII);
 
     private static final ZonedDateTime CAPTURE_TIME =
-            ZonedDateTime.of(LocalDateTime.of(2020, 12, 15, 13, 15), ZoneId.of("EST"));
+            ZonedDateTime.of(LocalDateTime.of(2020, 12, 15, 13, 15), ZoneId.of("America/New_York"));
 
     private FakeFeatureFlags mFeatureFlags = new FakeFeatureFlags();
     @Mock
@@ -89,7 +89,22 @@ public class ImageExporterTest extends SysuiTestCase {
     @Test
     public void testImageFilename() {
         assertEquals("image file name", "Screenshot_20201215-131500.png",
-                ImageExporter.createFilename(CAPTURE_TIME, CompressFormat.PNG, null));
+                ImageExporter.createFilename(CAPTURE_TIME, CompressFormat.PNG,
+                    Display.DEFAULT_DISPLAY, null));
+    }
+
+    @Test
+    public void testImageFilename_secondaryDisplay1() {
+        assertEquals("image file name", "Screenshot_20201215-131500-display-1.png",
+                ImageExporter.createFilename(CAPTURE_TIME, CompressFormat.PNG, /* displayId= */ 1,
+                    null));
+    }
+
+    @Test
+    public void testImageFilename_secondaryDisplay2() {
+        assertEquals("image file name", "Screenshot_20201215-131500-display-2.png",
+                ImageExporter.createFilename(CAPTURE_TIME, CompressFormat.PNG, /* displayId= */ 2,
+                    null));
     }
 
     @Test
@@ -110,7 +125,6 @@ public class ImageExporterTest extends SysuiTestCase {
     @Test
     public void testImageExport() throws ExecutionException, InterruptedException, IOException {
         ContentResolver contentResolver = mContext.getContentResolver();
-        mFeatureFlags.set(Flags.SCREENSHOT_WORK_PROFILE_POLICY, true);
         ImageExporter exporter = new ImageExporter(contentResolver, mFeatureFlags);
 
         UUID requestId = UUID.fromString("3c11da99-9284-4863-b1d5-6f3684976814");
@@ -118,7 +132,7 @@ public class ImageExporterTest extends SysuiTestCase {
 
         ListenableFuture<ImageExporter.Result> direct =
                 exporter.export(DIRECT_EXECUTOR, requestId, original, CAPTURE_TIME,
-                        Process.myUserHandle(), null);
+                        Process.myUserHandle(), Display.DEFAULT_DISPLAY, null);
         assertTrue("future should be done", direct.isDone());
         assertFalse("future should not be canceled", direct.isCancelled());
         ImageExporter.Result result = direct.get();
@@ -171,7 +185,8 @@ public class ImageExporterTest extends SysuiTestCase {
 
     @Test
     public void testMediaStoreMetadata() {
-        String name = ImageExporter.createFilename(CAPTURE_TIME, CompressFormat.PNG, null);
+        String name = ImageExporter.createFilename(CAPTURE_TIME, CompressFormat.PNG,
+                Display.DEFAULT_DISPLAY, null));
         ContentValues values = ImageExporter.createMetadata(CAPTURE_TIME, CompressFormat.PNG, name);
         assertEquals("Pictures/Screenshots",
                 values.getAsString(MediaStore.MediaColumns.RELATIVE_PATH));
@@ -189,7 +204,6 @@ public class ImageExporterTest extends SysuiTestCase {
 
     @Test
     public void testSetUser() {
-        mFeatureFlags.set(Flags.SCREENSHOT_WORK_PROFILE_POLICY, true);
         ImageExporter exporter = new ImageExporter(mMockContentResolver, mFeatureFlags);
 
         UserHandle imageUserHande = UserHandle.of(10);
@@ -199,30 +213,12 @@ public class ImageExporterTest extends SysuiTestCase {
         Mockito.when(mMockContentResolver.insert(uriCaptor.capture(), Mockito.any())).thenReturn(
                 null);
         exporter.export(DIRECT_EXECUTOR, UUID.fromString("3c11da99-9284-4863-b1d5-6f3684976814"),
-                null, CAPTURE_TIME, imageUserHande);
+                null, CAPTURE_TIME, imageUserHande, Display.DEFAULT_DISPLAY, null);
 
         Uri expected = MediaStore.Images.Media.EXTERNAL_CONTENT_URI;
         expected = ContentProvider.maybeAddUserId(expected, imageUserHande.getIdentifier());
 
         assertEquals(expected, uriCaptor.getValue());
-    }
-
-    @Test
-    public void testSetUser_noWorkProfile() {
-        mFeatureFlags.set(Flags.SCREENSHOT_WORK_PROFILE_POLICY, false);
-        ImageExporter exporter = new ImageExporter(mMockContentResolver, mFeatureFlags);
-
-        UserHandle imageUserHandle = UserHandle.of(10);
-
-        ArgumentCaptor<Uri> uriCaptor = ArgumentCaptor.forClass(Uri.class);
-        // Capture the URI and then return null to bail out of export.
-        Mockito.when(mMockContentResolver.insert(uriCaptor.capture(), Mockito.any())).thenReturn(
-                null);
-        exporter.export(DIRECT_EXECUTOR, UUID.fromString("3c11da99-9284-4863-b1d5-6f3684976814"),
-                null, CAPTURE_TIME, imageUserHandle);
-
-        // The user handle should be ignored here since the flag is off.
-        assertEquals(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, uriCaptor.getValue());
     }
 
     @SuppressWarnings("SameParameterValue")

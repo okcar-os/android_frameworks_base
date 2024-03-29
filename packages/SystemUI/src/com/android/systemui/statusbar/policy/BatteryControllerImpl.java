@@ -16,21 +16,25 @@
 
 package com.android.systemui.statusbar.policy;
 
-import static android.os.BatteryManager.BATTERY_HEALTH_OVERHEAT;
-import static android.os.BatteryManager.BATTERY_HEALTH_UNKNOWN;
-import static android.os.BatteryManager.EXTRA_HEALTH;
+import static android.os.BatteryManager.CHARGING_POLICY_ADAPTIVE_LONGLIFE;
+import static android.os.BatteryManager.CHARGING_POLICY_DEFAULT;
+import static android.os.BatteryManager.EXTRA_CHARGING_STATUS;
 import static android.os.BatteryManager.EXTRA_PRESENT;
+import static com.android.settingslib.fuelgauge.BatterySaverLogging.SAVER_ENABLED_QS;
+import static com.android.systemui.util.DumpUtilsKt.asIndenting;
 
 import android.annotation.WorkerThread;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.hardware.usb.UsbManager;
 import android.os.BatteryManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.PowerManager;
 import android.os.PowerSaveState;
+import android.util.IndentingPrintWriter;
 import android.util.Log;
 import android.view.View;
 
@@ -38,6 +42,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.android.internal.annotations.VisibleForTesting;
+import com.android.settingslib.Utils;
 import com.android.settingslib.fuelgauge.BatterySaverUtils;
 import com.android.settingslib.fuelgauge.Estimate;
 import com.android.settingslib.utils.PowerUtil;
@@ -79,6 +84,7 @@ public class BatteryControllerImpl extends BroadcastReceiver implements BatteryC
     private final PowerManager mPowerManager;
     private final DemoModeController mDemoModeController;
     private final DumpManager mDumpManager;
+    private final BatteryControllerLogger mLogger;
     private final Handler mMainHandler;
     private final Handler mBgHandler;
     protected final Context mContext;
@@ -92,7 +98,8 @@ public class BatteryControllerImpl extends BroadcastReceiver implements BatteryC
     protected boolean mPowerSave;
     private boolean mAodPowerSave;
     private boolean mWirelessCharging;
-    private boolean mIsOverheated = false;
+    private boolean mIsBatteryDefender = false;
+    private boolean mIsIncompatibleCharging = false;
     private boolean mTestMode = false;
     @VisibleForTesting
     boolean mHasReceivedBattery = false;
@@ -115,6 +122,7 @@ public class BatteryControllerImpl extends BroadcastReceiver implements BatteryC
             BroadcastDispatcher broadcastDispatcher,
             DemoModeController demoModeController,
             DumpManager dumpManager,
+            BatteryControllerLogger logger,
             @Main Handler mainHandler,
             @Background Handler bgHandler) {
         mContext = context;
@@ -125,6 +133,8 @@ public class BatteryControllerImpl extends BroadcastReceiver implements BatteryC
         mBroadcastDispatcher = broadcastDispatcher;
         mDemoModeController = demoModeController;
         mDumpManager = dumpManager;
+        mLogger = logger;
+        mLogger.logBatteryControllerInstance(this);
     }
 
     private void registerReceiver() {
@@ -132,11 +142,13 @@ public class BatteryControllerImpl extends BroadcastReceiver implements BatteryC
         filter.addAction(Intent.ACTION_BATTERY_CHANGED);
         filter.addAction(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED);
         filter.addAction(ACTION_LEVEL_TEST);
+        filter.addAction(UsbManager.ACTION_USB_PORT_COMPLIANCE_CHANGED);
         mBroadcastDispatcher.registerReceiver(this, filter);
     }
 
     @Override
     public void init() {
+        mLogger.logBatteryControllerInit(this, mHasReceivedBattery);
         registerReceiver();
         if (!mHasReceivedBattery) {
             // Get initial state. Relying on Sticky behavior until API for getting info.
@@ -155,21 +167,37 @@ public class BatteryControllerImpl extends BroadcastReceiver implements BatteryC
     }
 
     @Override
-    public void dump(PrintWriter pw, String[] args) {
-        pw.println("BatteryController state:");
-        pw.print("  mLevel="); pw.println(mLevel);
-        pw.print("  mPluggedIn="); pw.println(mPluggedIn);
-        pw.print("  mCharging="); pw.println(mCharging);
-        pw.print("  mCharged="); pw.println(mCharged);
-        pw.print("  mIsOverheated="); pw.println(mIsOverheated);
-        pw.print("  mPowerSave="); pw.println(mPowerSave);
-        pw.print("  mStateUnknown="); pw.println(mStateUnknown);
+    public void dump(@NonNull PrintWriter pw, @NonNull String[] args) {
+        IndentingPrintWriter ipw = asIndenting(pw);
+        ipw.println("BatteryController state:");
+        ipw.increaseIndent();
+        ipw.print("mHasReceivedBattery="); ipw.println(mHasReceivedBattery);
+        ipw.print("mLevel="); ipw.println(mLevel);
+        ipw.print("mPluggedIn="); ipw.println(mPluggedIn);
+        ipw.print("mCharging="); ipw.println(mCharging);
+        ipw.print("mCharged="); ipw.println(mCharged);
+        ipw.print("mIsBatteryDefender="); ipw.println(mIsBatteryDefender);
+        ipw.print("mIsIncompatibleCharging="); ipw.println(mIsIncompatibleCharging);
+        ipw.print("mPowerSave="); ipw.println(mPowerSave);
+        ipw.print("mStateUnknown="); ipw.println(mStateUnknown);
+        ipw.println("Callbacks:------------------");
+        // Since the above lines are already indented, we need to indent twice for the callbacks.
+        ipw.increaseIndent();
+        synchronized (mChangeCallbacks) {
+            final int n = mChangeCallbacks.size();
+            for (int i = 0; i < n; i++) {
+                mChangeCallbacks.get(i).dump(ipw, args);
+            }
+        }
+        ipw.decreaseIndent();
+        ipw.println("------------------");
     }
 
     @Override
     public void setPowerSaveMode(boolean powerSave, View view) {
         if (powerSave) mPowerSaverStartView.set(new WeakReference<>(view));
-        BatterySaverUtils.setPowerSaveMode(mContext, powerSave, /*needFirstTimeWarning*/ true);
+        BatterySaverUtils.setPowerSaveMode(mContext, powerSave, /*needFirstTimeWarning*/ true,
+                SAVER_ENABLED_QS);
     }
 
     @Override
@@ -194,7 +222,8 @@ public class BatteryControllerImpl extends BroadcastReceiver implements BatteryC
         cb.onPowerSaveChanged(mPowerSave);
         cb.onBatteryUnknownStateChanged(mStateUnknown);
         cb.onWirelessChargingChanged(mWirelessCharging);
-        cb.onIsOverheatedChanged(mIsOverheated);
+        cb.onIsBatteryDefenderChanged(mIsBatteryDefender);
+        cb.onIsIncompatibleChargingChanged(mIsIncompatibleCharging);
     }
 
     @Override
@@ -207,10 +236,15 @@ public class BatteryControllerImpl extends BroadcastReceiver implements BatteryC
     @Override
     public void onReceive(final Context context, Intent intent) {
         final String action = intent.getAction();
+        mLogger.logIntentReceived(action);
         if (action.equals(Intent.ACTION_BATTERY_CHANGED)) {
-            if (mTestMode && !intent.getBooleanExtra("testmode", false)) return;
+            mLogger.logBatteryChangedIntent(intent);
+            if (mTestMode && !intent.getBooleanExtra("testmode", false)) {
+                mLogger.logBatteryChangedSkipBecauseTest();
+                return;
+            }
             mHasReceivedBattery = true;
-            mLevel = (int)(100f
+            mLevel = (int) (100f
                     * intent.getIntExtra(BatteryManager.EXTRA_LEVEL, 0)
                     / intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100));
             mPluggedChargingSource = intent.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0);
@@ -233,17 +267,24 @@ public class BatteryControllerImpl extends BroadcastReceiver implements BatteryC
                 fireBatteryUnknownStateChanged();
             }
 
-            int batteryHealth = intent.getIntExtra(EXTRA_HEALTH, BATTERY_HEALTH_UNKNOWN);
-            boolean isOverheated = batteryHealth == BATTERY_HEALTH_OVERHEAT;
-            if (isOverheated != mIsOverheated) {
-                mIsOverheated = isOverheated;
-                fireIsOverheatedChanged();
+            int chargingStatus = intent.getIntExtra(EXTRA_CHARGING_STATUS, CHARGING_POLICY_DEFAULT);
+            boolean isBatteryDefender = chargingStatus == CHARGING_POLICY_ADAPTIVE_LONGLIFE;
+            if (isBatteryDefender != mIsBatteryDefender) {
+                mIsBatteryDefender = isBatteryDefender;
+                fireIsBatteryDefenderChanged();
             }
 
             fireBatteryLevelChanged();
         } else if (action.equals(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED)) {
             updatePowerSave();
+        } else if (action.equals(UsbManager.ACTION_USB_PORT_COMPLIANCE_CHANGED)) {
+            boolean isIncompatibleCharging = Utils.containsIncompatibleChargers(mContext, TAG);
+            if (isIncompatibleCharging != mIsIncompatibleCharging) {
+                mIsIncompatibleCharging = isIncompatibleCharging;
+                fireIsIncompatibleChargingChanged();
+            }
         } else if (action.equals(ACTION_LEVEL_TEST)) {
+            mLogger.logEnterTestMode();
             mTestMode = true;
             mMainHandler.post(new Runnable() {
                 int mCurrentLevel = 0;
@@ -251,9 +292,11 @@ public class BatteryControllerImpl extends BroadcastReceiver implements BatteryC
                 int mSavedLevel = mLevel;
                 boolean mSavedPluggedIn = mPluggedIn;
                 Intent mTestIntent = new Intent(Intent.ACTION_BATTERY_CHANGED);
+
                 @Override
                 public void run() {
                     if (mCurrentLevel < 0) {
+                        mLogger.logExitTestMode();
                         mTestMode = false;
                         mTestIntent.putExtra("level", mSavedLevel);
                         mTestIntent.putExtra("plugged", mSavedPluggedIn);
@@ -310,8 +353,15 @@ public class BatteryControllerImpl extends BroadcastReceiver implements BatteryC
         return mPluggedChargingSource == BatteryManager.BATTERY_PLUGGED_WIRELESS;
     }
 
-    public boolean isOverheated() {
-        return mIsOverheated;
+    public boolean isBatteryDefender() {
+        return mIsBatteryDefender;
+    }
+
+    /**
+     * Returns whether the charging adapter is incompatible.
+     */
+    public boolean isIncompatibleCharging() {
+        return mIsIncompatibleCharging;
     }
 
     @Override
@@ -399,6 +449,7 @@ public class BatteryControllerImpl extends BroadcastReceiver implements BatteryC
     }
 
     protected void fireBatteryLevelChanged() {
+        mLogger.logBatteryLevelChangedCallback(mLevel, mPluggedIn, mCharging);
         synchronized (mChangeCallbacks) {
             final int N = mChangeCallbacks.size();
             for (int i = 0; i < N; i++) {
@@ -425,11 +476,20 @@ public class BatteryControllerImpl extends BroadcastReceiver implements BatteryC
         }
     }
 
-    private void fireIsOverheatedChanged() {
+    private void fireIsBatteryDefenderChanged() {
         synchronized (mChangeCallbacks) {
             final int n = mChangeCallbacks.size();
             for (int i = 0; i < n; i++) {
-                mChangeCallbacks.get(i).onIsOverheatedChanged(mIsOverheated);
+                mChangeCallbacks.get(i).onIsBatteryDefenderChanged(mIsBatteryDefender);
+            }
+        }
+    }
+
+    private void fireIsIncompatibleChargingChanged() {
+        synchronized (mChangeCallbacks) {
+            final int n = mChangeCallbacks.size();
+            for (int i = 0; i < n; i++) {
+                mChangeCallbacks.get(i).onIsIncompatibleChargingChanged(mIsIncompatibleCharging);
             }
         }
     }
@@ -444,7 +504,8 @@ public class BatteryControllerImpl extends BroadcastReceiver implements BatteryC
         String plugged = args.getString("plugged");
         String powerSave = args.getString("powersave");
         String present = args.getString("present");
-        String overheated = args.getString("overheated");
+        String defender = args.getString("defender");
+        String incompatible = args.getString("incompatible");
         if (level != null) {
             mLevel = Math.min(Math.max(Integer.parseInt(level), 0), 100);
         }
@@ -459,9 +520,13 @@ public class BatteryControllerImpl extends BroadcastReceiver implements BatteryC
             mStateUnknown = !present.equals("true");
             fireBatteryUnknownStateChanged();
         }
-        if (overheated != null) {
-            mIsOverheated = overheated.equals("true");
-            fireIsOverheatedChanged();
+        if (defender != null) {
+            mIsBatteryDefender = defender.equals("true");
+            fireIsBatteryDefenderChanged();
+        }
+        if (incompatible != null) {
+            mIsIncompatibleCharging = incompatible.equals("true");
+            fireIsIncompatibleChargingChanged();
         }
         fireBatteryLevelChanged();
     }

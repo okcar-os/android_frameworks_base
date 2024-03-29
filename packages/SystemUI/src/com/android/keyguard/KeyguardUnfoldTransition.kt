@@ -18,7 +18,7 @@ package com.android.keyguard
 
 import android.content.Context
 import android.view.ViewGroup
-import com.android.systemui.R
+import com.android.systemui.res.R
 import com.android.systemui.plugins.statusbar.StatusBarStateController
 import com.android.systemui.statusbar.StatusBarState.KEYGUARD
 import com.android.systemui.shared.animation.UnfoldConstantTranslateAnimator
@@ -53,7 +53,10 @@ constructor(
         UnfoldConstantTranslateAnimator(
             viewsIdToTranslate =
                 setOf(
-                    ViewIdToTranslate(R.id.keyguard_status_area, START, filterKeyguard),
+                    ViewIdToTranslate(R.id.keyguard_status_area, START, filterKeyguard,
+                        { view, value ->
+                            (view as? KeyguardStatusAreaView)?.translateXFromUnfold = value
+                        }),
                     ViewIdToTranslate(
                         R.id.lockscreen_clock_view_large, START, filterKeyguardAndSplitShadeOnly),
                     ViewIdToTranslate(R.id.lockscreen_clock_view, START, filterKeyguard),

@@ -18,6 +18,12 @@ package com.android.server.net;
 
 import static android.Manifest.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS;
 import static android.Manifest.permission.NETWORK_STACK;
+import static android.app.ActivityManager.PROCESS_CAPABILITY_NONE;
+import static android.app.ActivityManager.PROCESS_CAPABILITY_POWER_RESTRICTED_NETWORK;
+import static android.app.ActivityManager.PROCESS_CAPABILITY_USER_RESTRICTED_NETWORK;
+import static android.app.ActivityManager.PROCESS_STATE_IMPORTANT_FOREGROUND;
+import static android.app.ActivityManager.PROCESS_STATE_SERVICE;
+import static android.app.ActivityManager.PROCESS_STATE_TOP;
 import static android.net.ConnectivityManager.BLOCKED_METERED_REASON_DATA_SAVER;
 import static android.net.ConnectivityManager.BLOCKED_METERED_REASON_USER_RESTRICTED;
 import static android.net.ConnectivityManager.BLOCKED_REASON_APP_STANDBY;
@@ -151,6 +157,7 @@ import android.telephony.CarrierConfigManager;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.SubscriptionPlan;
+import android.telephony.TelephonyCallback;
 import android.telephony.TelephonyManager;
 import android.test.suitebuilder.annotation.MediumTest;
 import android.text.TextUtils;
@@ -172,7 +179,7 @@ import com.android.internal.util.test.BroadcastInterceptingContext.FutureIntent;
 import com.android.internal.util.test.FsUtil;
 import com.android.server.DeviceIdleInternal;
 import com.android.server.LocalServices;
-import com.android.server.pm.parsing.pkg.AndroidPackage;
+import com.android.server.pm.pkg.AndroidPackage;
 import com.android.server.usage.AppStandbyInternal;
 
 import com.google.common.util.concurrent.AbstractFuture;
@@ -241,6 +248,7 @@ public class NetworkPolicyManagerServiceTest {
     private static final String TEST_WIFI_NETWORK_KEY = "TestWifiNetworkKey";
     private static final String TEST_IMSI = "310210";
     private static final int TEST_SUB_ID = 42;
+    private static final int TEST_SUB_ID2 = 24;
     private static final Network TEST_NETWORK = mock(Network.class, CALLS_REAL_METHODS);
 
     private static NetworkTemplate sTemplateWifi = new NetworkTemplate.Builder(MATCH_WIFI)
@@ -281,6 +289,8 @@ public class NetworkPolicyManagerServiceTest {
 
     private ArgumentCaptor<ConnectivityManager.NetworkCallback> mNetworkCallbackCaptor =
             ArgumentCaptor.forClass(ConnectivityManager.NetworkCallback.class);
+
+    private TelephonyCallback.ActiveDataSubscriptionIdListener mActiveDataSubIdListener;
 
     private ActivityManagerInternal mActivityManagerInternal;
     private PackageManagerInternal mPackageManagerInternal;
@@ -357,6 +367,8 @@ public class NetworkPolicyManagerServiceTest {
 
     private class TestDependencies extends NetworkPolicyManagerService.Dependencies {
         private final SparseArray<NetworkStats.Bucket> mMockedStats = new SparseArray<>();
+        private int mMockDefaultDataSubId;
+        private int mMockedActiveDataSubId;
 
         TestDependencies(Context context) {
             super(context);
@@ -393,6 +405,41 @@ public class NetworkPolicyManagerServiceTest {
         private void increaseMockedTotalBytes(int uid, long rxBytes, long txBytes) {
             final NetworkStats.Bucket bucket = mMockedStats.get(uid);
             setMockedTotalBytes(uid, bucket.getRxBytes() + rxBytes, bucket.getTxBytes() + txBytes);
+        }
+
+        void setDefaultAndActiveDataSubId(int defaultDataSubId, int activeDataSubId) {
+            mMockDefaultDataSubId = defaultDataSubId;
+            mMockedActiveDataSubId = activeDataSubId;
+        }
+
+        @Override
+        int getDefaultDataSubId() {
+            return mMockDefaultDataSubId;
+        }
+
+        @Override
+        int getActivateDataSubId() {
+            return mMockedActiveDataSubId;
+        }
+    }
+
+    // TODO: Use TestLooperManager instead.
+    /**
+     * Helper that leverages try-with-resources to pause dispatch of
+     * {@link #mHandlerThread} until released.
+     */
+    static class SyncBarrier implements AutoCloseable {
+        private final int mToken;
+        private Handler mHandler;
+
+        SyncBarrier(Handler handler) {
+            mHandler = handler;
+            mToken = mHandler.getLooper().getQueue().postSyncBarrier();
+        }
+
+        @Override
+        public void close() throws Exception {
+            mHandler.getLooper().getQueue().removeSyncBarrier(mToken);
         }
     }
 
@@ -551,6 +598,14 @@ public class NetworkPolicyManagerServiceTest {
         NetworkPolicy defaultPolicy = mService.buildDefaultCarrierPolicy(0, "");
         mDefaultWarningBytes = defaultPolicy.warningBytes;
         mDefaultLimitBytes = defaultPolicy.limitBytes;
+
+        // Catch TelephonyCallback during systemReady().
+        ArgumentCaptor<TelephonyCallback> telephonyCallbackArgumentCaptor =
+                ArgumentCaptor.forClass(TelephonyCallback.class);
+        verify(mTelephonyManager).registerTelephonyCallback(any(),
+                telephonyCallbackArgumentCaptor.capture());
+        mActiveDataSubIdListener = (TelephonyCallback.ActiveDataSubscriptionIdListener)
+                telephonyCallbackArgumentCaptor.getValue();
     }
 
     @After
@@ -1018,25 +1073,113 @@ public class NetworkPolicyManagerServiceTest {
     // don't check for side-effects (like calls to NetworkManagementService) neither cover all
     // different modes (Data Saver, Battery Saver, Doze, App idle, etc...).
     // These scenarios are extensively tested on CTS' HostsideRestrictBackgroundNetworkTests.
+    @SuppressWarnings("GuardedBy")
     @Test
     public void testUidForeground() throws Exception {
         // push all uids into background
         long procStateSeq = 0;
-        callOnUidStateChanged(UID_A, ActivityManager.PROCESS_STATE_SERVICE, procStateSeq++);
-        callOnUidStateChanged(UID_B, ActivityManager.PROCESS_STATE_SERVICE, procStateSeq++);
-        assertFalse(mService.isUidForeground(UID_A));
-        assertFalse(mService.isUidForeground(UID_B));
+        callAndWaitOnUidStateChanged(UID_A, PROCESS_STATE_SERVICE, procStateSeq++);
+        callAndWaitOnUidStateChanged(UID_B, PROCESS_STATE_SERVICE, procStateSeq++);
+        assertFalse(mService.isUidForegroundOnRestrictPowerUL(UID_A));
+        assertFalse(mService.isUidForegroundOnRestrictBackgroundUL(UID_A));
+        assertFalse(mService.isUidForegroundOnRestrictPowerUL(UID_B));
+        assertFalse(mService.isUidForegroundOnRestrictBackgroundUL(UID_B));
 
         // push one of the uids into foreground
-        callOnUidStateChanged(UID_A, ActivityManager.PROCESS_STATE_TOP, procStateSeq++);
-        assertTrue(mService.isUidForeground(UID_A));
-        assertFalse(mService.isUidForeground(UID_B));
+        callAndWaitOnUidStateChanged(UID_A, PROCESS_STATE_TOP, procStateSeq++);
+        assertTrue(mService.isUidForegroundOnRestrictPowerUL(UID_A));
+        assertTrue(mService.isUidForegroundOnRestrictBackgroundUL(UID_A));
+        assertFalse(mService.isUidForegroundOnRestrictPowerUL(UID_B));
+        assertFalse(mService.isUidForegroundOnRestrictBackgroundUL(UID_B));
 
         // and swap another uid into foreground
-        callOnUidStateChanged(UID_A, ActivityManager.PROCESS_STATE_SERVICE, procStateSeq++);
-        callOnUidStateChanged(UID_B, ActivityManager.PROCESS_STATE_TOP, procStateSeq++);
-        assertFalse(mService.isUidForeground(UID_A));
-        assertTrue(mService.isUidForeground(UID_B));
+        callAndWaitOnUidStateChanged(UID_A, PROCESS_STATE_SERVICE, procStateSeq++);
+        callAndWaitOnUidStateChanged(UID_B, PROCESS_STATE_TOP, procStateSeq++);
+        assertFalse(mService.isUidForegroundOnRestrictPowerUL(UID_A));
+        assertFalse(mService.isUidForegroundOnRestrictBackgroundUL(UID_A));
+        assertTrue(mService.isUidForegroundOnRestrictPowerUL(UID_B));
+        assertTrue(mService.isUidForegroundOnRestrictBackgroundUL(UID_B));
+
+        // change capability of an uid to allow access to power restricted network
+        callAndWaitOnUidStateChanged(UID_A, PROCESS_STATE_SERVICE, procStateSeq++,
+                PROCESS_CAPABILITY_POWER_RESTRICTED_NETWORK);
+        callAndWaitOnUidStateChanged(UID_B, PROCESS_STATE_SERVICE, procStateSeq++,
+                PROCESS_CAPABILITY_NONE);
+        assertTrue(mService.isUidForegroundOnRestrictPowerUL(UID_A));
+        assertFalse(mService.isUidForegroundOnRestrictBackgroundUL(UID_A));
+        assertFalse(mService.isUidForegroundOnRestrictPowerUL(UID_B));
+        assertFalse(mService.isUidForegroundOnRestrictBackgroundUL(UID_B));
+
+        // change capability of an uid to allow access to user restricted network
+        callAndWaitOnUidStateChanged(UID_A, PROCESS_STATE_IMPORTANT_FOREGROUND, procStateSeq++,
+                PROCESS_CAPABILITY_USER_RESTRICTED_NETWORK);
+        callAndWaitOnUidStateChanged(UID_B, PROCESS_STATE_SERVICE, procStateSeq++,
+                PROCESS_CAPABILITY_NONE);
+        assertFalse(mService.isUidForegroundOnRestrictPowerUL(UID_A));
+        assertTrue(mService.isUidForegroundOnRestrictBackgroundUL(UID_A));
+        assertFalse(mService.isUidForegroundOnRestrictPowerUL(UID_B));
+        assertFalse(mService.isUidForegroundOnRestrictBackgroundUL(UID_B));
+    }
+
+    @SuppressWarnings("GuardedBy")
+    @Test
+    public void testUidForeground_withPendingState() throws Exception {
+        long procStateSeq = 0;
+        callAndWaitOnUidStateChanged(UID_A, PROCESS_STATE_SERVICE,
+                procStateSeq++, PROCESS_CAPABILITY_NONE);
+        callAndWaitOnUidStateChanged(UID_B, PROCESS_STATE_SERVICE,
+                procStateSeq++, PROCESS_CAPABILITY_NONE);
+        assertFalse(mService.isUidForegroundOnRestrictPowerUL(UID_A));
+        assertFalse(mService.isUidForegroundOnRestrictBackgroundUL(UID_A));
+        assertFalse(mService.isUidForegroundOnRestrictPowerUL(UID_B));
+        assertFalse(mService.isUidForegroundOnRestrictBackgroundUL(UID_B));
+
+        try (SyncBarrier b = new SyncBarrier(mService.mUidEventHandler)) {
+            // Verify that a callback with an old procStateSeq is ignored.
+            callOnUidStatechanged(UID_A, PROCESS_STATE_TOP, 0,
+                    PROCESS_CAPABILITY_POWER_RESTRICTED_NETWORK);
+            assertFalse(mService.isUidForegroundOnRestrictPowerUL(UID_A));
+            assertFalse(mService.isUidForegroundOnRestrictBackgroundUL(UID_A));
+            assertFalse(mService.isUidForegroundOnRestrictPowerUL(UID_B));
+            assertFalse(mService.isUidForegroundOnRestrictBackgroundUL(UID_B));
+
+            callOnUidStatechanged(UID_A, PROCESS_STATE_SERVICE, procStateSeq++,
+                    PROCESS_CAPABILITY_POWER_RESTRICTED_NETWORK);
+            assertTrue(mService.isUidForegroundOnRestrictPowerUL(UID_A));
+            assertFalse(mService.isUidForegroundOnRestrictBackgroundUL(UID_A));
+            assertFalse(mService.isUidForegroundOnRestrictPowerUL(UID_B));
+            assertFalse(mService.isUidForegroundOnRestrictBackgroundUL(UID_B));
+
+            callOnUidStatechanged(UID_A, PROCESS_STATE_IMPORTANT_FOREGROUND, procStateSeq++,
+                    PROCESS_CAPABILITY_USER_RESTRICTED_NETWORK);
+            assertFalse(mService.isUidForegroundOnRestrictPowerUL(UID_A));
+            assertTrue(mService.isUidForegroundOnRestrictBackgroundUL(UID_A));
+            assertFalse(mService.isUidForegroundOnRestrictPowerUL(UID_B));
+            assertFalse(mService.isUidForegroundOnRestrictBackgroundUL(UID_B));
+
+            callOnUidStatechanged(UID_A, PROCESS_STATE_TOP, procStateSeq++,
+                    PROCESS_CAPABILITY_NONE);
+            assertTrue(mService.isUidForegroundOnRestrictPowerUL(UID_A));
+            assertTrue(mService.isUidForegroundOnRestrictBackgroundUL(UID_A));
+            assertFalse(mService.isUidForegroundOnRestrictPowerUL(UID_B));
+            assertFalse(mService.isUidForegroundOnRestrictBackgroundUL(UID_B));
+        }
+        waitForUidEventHandlerIdle();
+
+        assertTrue(mService.isUidForegroundOnRestrictPowerUL(UID_A));
+        assertTrue(mService.isUidForegroundOnRestrictBackgroundUL(UID_A));
+        assertFalse(mService.isUidForegroundOnRestrictPowerUL(UID_B));
+        assertFalse(mService.isUidForegroundOnRestrictBackgroundUL(UID_B));
+
+        try (SyncBarrier b = new SyncBarrier(mService.mUidEventHandler)) {
+            callOnUidStatechanged(UID_A, PROCESS_STATE_SERVICE, procStateSeq++,
+                    PROCESS_CAPABILITY_NONE);
+            assertTrue(mService.isUidForegroundOnRestrictPowerUL(UID_A));
+            assertTrue(mService.isUidForegroundOnRestrictBackgroundUL(UID_A));
+            assertFalse(mService.isUidForegroundOnRestrictPowerUL(UID_B));
+            assertFalse(mService.isUidForegroundOnRestrictBackgroundUL(UID_B));
+        }
+        waitForUidEventHandlerIdle();
     }
 
     @Test
@@ -1243,6 +1386,7 @@ public class NetworkPolicyManagerServiceTest {
 
             reset(mTelephonyManager, mNetworkManager, mNotifManager);
             TelephonyManager tmSub = expectMobileDefaults();
+            clearInvocations(mNotifManager);
 
             mService.updateNetworks();
 
@@ -1258,6 +1402,7 @@ public class NetworkPolicyManagerServiceTest {
 
             reset(mTelephonyManager, mNetworkManager, mNotifManager);
             TelephonyManager tmSub = expectMobileDefaults();
+            clearInvocations(mNotifManager);
 
             mService.updateNetworks();
 
@@ -1275,6 +1420,7 @@ public class NetworkPolicyManagerServiceTest {
             reset(mTelephonyManager, mNetworkManager, mNotifManager);
             TelephonyManager tmSub = expectMobileDefaults();
             expectDefaultCarrierConfig();
+            clearInvocations(mNotifManager);
 
             mService.updateNetworks();
 
@@ -1291,6 +1437,7 @@ public class NetworkPolicyManagerServiceTest {
 
             reset(mTelephonyManager, mNetworkManager, mNotifManager);
             TelephonyManager tmSub = expectMobileDefaults();
+            clearInvocations(mNotifManager);
 
             mService.updateNetworks();
 
@@ -1304,6 +1451,7 @@ public class NetworkPolicyManagerServiceTest {
         {
             reset(mTelephonyManager, mNetworkManager, mNotifManager);
             TelephonyManager tmSub = expectMobileDefaults();
+            clearInvocations(mNotifManager);
 
             mService.snoozeLimit(sTemplateCarrierMetered);
             mService.updateNetworks();
@@ -1311,6 +1459,31 @@ public class NetworkPolicyManagerServiceTest {
             verify(tmSub, atLeastOnce()).setPolicyDataEnabled(true);
             verify(mNetworkManager, atLeastOnce()).setInterfaceQuota(TEST_IFACE,
                     Long.MAX_VALUE);
+            verify(mNotifManager, atLeastOnce()).notifyAsUser(any(), eq(TYPE_LIMIT_SNOOZED),
+                    isA(Notification.class), eq(UserHandle.ALL));
+        }
+        // The sub is no longer used for data(e.g. user uses another sub), hide the notifications.
+        {
+            reset(mTelephonyManager, mNetworkManager, mNotifManager);
+
+            notifyDefaultAndActiveDataSubIdChange(TEST_SUB_ID2, TEST_SUB_ID2);
+            verify(mNotifManager, atLeastOnce()).cancel(any(), eq(TYPE_LIMIT_SNOOZED));
+        }
+        // The sub is not active for data(e.g. due to auto data switch), but still default for data,
+        // show notification.
+        {
+            reset(mTelephonyManager, mNetworkManager, mNotifManager);
+
+            notifyDefaultAndActiveDataSubIdChange(TEST_SUB_ID, TEST_SUB_ID2);
+            verify(mNotifManager, atLeastOnce()).notifyAsUser(any(), eq(TYPE_LIMIT_SNOOZED),
+                    isA(Notification.class), eq(UserHandle.ALL));
+        }
+        // The sub is active for data, but not the default(e.g. due to auto data switch),
+        // show notification.
+        {
+            reset(mTelephonyManager, mNetworkManager, mNotifManager);
+
+            notifyDefaultAndActiveDataSubIdChange(TEST_SUB_ID2, TEST_SUB_ID);
             verify(mNotifManager, atLeastOnce()).notifyAsUser(any(), eq(TYPE_LIMIT_SNOOZED),
                     isA(Notification.class), eq(UserHandle.ALL));
         }
@@ -1417,14 +1590,28 @@ public class NetworkPolicyManagerServiceTest {
     @Test
     public void testOnUidStateChanged_notifyAMS() throws Exception {
         final long procStateSeq = 222;
-        callOnUidStateChanged(UID_A, ActivityManager.PROCESS_STATE_SERVICE, procStateSeq);
+        callAndWaitOnUidStateChanged(UID_A, PROCESS_STATE_SERVICE, procStateSeq);
         verify(mActivityManagerInternal).notifyNetworkPolicyRulesUpdated(UID_A, procStateSeq);
     }
 
-    private void callOnUidStateChanged(int uid, int procState, long procStateSeq)
+    private void callAndWaitOnUidStateChanged(int uid, int procState, long procStateSeq)
             throws Exception {
-        mUidObserver.onUidStateChanged(uid, procState, procStateSeq,
-                ActivityManager.PROCESS_CAPABILITY_NONE);
+        callAndWaitOnUidStateChanged(uid, procState, procStateSeq,
+                PROCESS_CAPABILITY_NONE);
+    }
+
+    private void callAndWaitOnUidStateChanged(int uid, int procState, long procStateSeq,
+            int capability) throws Exception {
+        callOnUidStatechanged(uid, procState, procStateSeq, capability);
+        waitForUidEventHandlerIdle();
+    }
+
+    private void callOnUidStatechanged(int uid, int procState, long procStateSeq, int capability)
+            throws Exception {
+        mUidObserver.onUidStateChanged(uid, procState, procStateSeq, capability);
+    }
+
+    private void waitForUidEventHandlerIdle() throws Exception {
         final CountDownLatch latch = new CountDownLatch(1);
         mService.mUidEventHandler.post(() -> {
             latch.countDown();
@@ -1927,9 +2114,9 @@ public class NetworkPolicyManagerServiceTest {
 
     @Test
     public void testLowPowerStandbyAllowlist() throws Exception {
-        callOnUidStateChanged(UID_A, ActivityManager.PROCESS_STATE_TOP, 0);
-        callOnUidStateChanged(UID_B, ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE, 0);
-        callOnUidStateChanged(UID_C, ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE, 0);
+        callAndWaitOnUidStateChanged(UID_A, PROCESS_STATE_TOP, 0);
+        callAndWaitOnUidStateChanged(UID_B, ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE, 0);
+        callAndWaitOnUidStateChanged(UID_C, ActivityManager.PROCESS_STATE_FOREGROUND_SERVICE, 0);
         expectHasInternetPermission(UID_A, true);
         expectHasInternetPermission(UID_B, true);
         expectHasInternetPermission(UID_C, true);
@@ -2062,6 +2249,9 @@ public class NetworkPolicyManagerServiceTest {
 
     @Test
     public void testNormalizeTemplate_duplicatedMergedImsiList() {
+        // This test leads to a Log.wtf, so skip it on eng builds. Otherwise, Log.wtf() would
+        // result in this process getting killed.
+        Assume.assumeFalse(Build.IS_ENG);
         final NetworkTemplate template = new NetworkTemplate.Builder(MATCH_CARRIER)
                 .setSubscriberIds(Set.of(TEST_IMSI)).build();
         final String[] mergedImsiGroup = new String[] {TEST_IMSI, TEST_IMSI};
@@ -2377,6 +2567,7 @@ public class NetworkPolicyManagerServiceTest {
             String subscriberId) {
         when(mSubscriptionManager.getActiveSubscriptionInfoList()).thenReturn(
                 createSubscriptionInfoList(subscriptionId));
+        notifyDefaultAndActiveDataSubIdChange(subscriptionId, subscriptionId);
 
         TelephonyManager subTelephonyManager;
         subTelephonyManager = mock(TelephonyManager.class);
@@ -2385,6 +2576,16 @@ public class NetworkPolicyManagerServiceTest {
         when(mTelephonyManager.createForSubscriptionId(subscriptionId))
                 .thenReturn(subTelephonyManager);
         return subTelephonyManager;
+    }
+
+    /**
+     * Telephony Manager callback notifies data sub Id changes.
+     * @param defaultDataSubId The mock default data sub Id.
+     * @param activeDataSubId The mock active data sub Id.
+     */
+    private void notifyDefaultAndActiveDataSubIdChange(int defaultDataSubId, int activeDataSubId) {
+        mDeps.setDefaultAndActiveDataSubId(defaultDataSubId, activeDataSubId);
+        mActiveDataSubIdListener.onActiveDataSubscriptionIdChanged(activeDataSubId);
     }
 
     /**

@@ -18,10 +18,10 @@ package com.android.wm.shell.pip.phone;
 
 import static com.android.internal.config.sysui.SystemUiDeviceConfigFlags.PIP_STASHING;
 import static com.android.internal.config.sysui.SystemUiDeviceConfigFlags.PIP_STASH_MINIMUM_VELOCITY_THRESHOLD;
+import static com.android.wm.shell.common.pip.PipBoundsState.STASH_TYPE_LEFT;
+import static com.android.wm.shell.common.pip.PipBoundsState.STASH_TYPE_NONE;
+import static com.android.wm.shell.common.pip.PipBoundsState.STASH_TYPE_RIGHT;
 import static com.android.wm.shell.pip.PipAnimationController.TRANSITION_DIRECTION_TO_PIP;
-import static com.android.wm.shell.pip.PipBoundsState.STASH_TYPE_LEFT;
-import static com.android.wm.shell.pip.PipBoundsState.STASH_TYPE_NONE;
-import static com.android.wm.shell.pip.PipBoundsState.STASH_TYPE_RIGHT;
 import static com.android.wm.shell.pip.phone.PhonePipMenuController.MENU_STATE_FULL;
 import static com.android.wm.shell.pip.phone.PhonePipMenuController.MENU_STATE_NONE;
 import static com.android.wm.shell.pip.phone.PipMenuView.ANIM_TYPE_NONE;
@@ -34,7 +34,6 @@ import android.content.res.Resources;
 import android.graphics.Point;
 import android.graphics.PointF;
 import android.graphics.Rect;
-import android.os.SystemProperties;
 import android.provider.DeviceConfig;
 import android.util.Size;
 import android.view.DisplayCutout;
@@ -51,12 +50,14 @@ import com.android.internal.protolog.common.ProtoLog;
 import com.android.wm.shell.R;
 import com.android.wm.shell.common.FloatingContentCoordinator;
 import com.android.wm.shell.common.ShellExecutor;
+import com.android.wm.shell.common.pip.PipBoundsAlgorithm;
+import com.android.wm.shell.common.pip.PipBoundsState;
+import com.android.wm.shell.common.pip.PipUiEventLogger;
+import com.android.wm.shell.common.pip.PipUtils;
+import com.android.wm.shell.common.pip.SizeSpecSource;
 import com.android.wm.shell.pip.PipAnimationController;
-import com.android.wm.shell.pip.PipBoundsAlgorithm;
-import com.android.wm.shell.pip.PipBoundsState;
 import com.android.wm.shell.pip.PipTaskOrganizer;
 import com.android.wm.shell.pip.PipTransitionController;
-import com.android.wm.shell.pip.PipUiEventLogger;
 import com.android.wm.shell.protolog.ShellProtoLogGroup;
 import com.android.wm.shell.sysui.ShellInit;
 
@@ -71,20 +72,12 @@ public class PipTouchHandler {
     private static final String TAG = "PipTouchHandler";
     private static final float DEFAULT_STASH_VELOCITY_THRESHOLD = 18000.f;
 
-    private boolean mEnablePipKeepClearAlgorithm =
-            SystemProperties.getBoolean("persist.wm.debug.enable_pip_keep_clear_algorithm", true);
-
-    @VisibleForTesting
-    void setEnablePipKeepClearAlgorithm(boolean value) {
-        mEnablePipKeepClearAlgorithm = value;
-    }
-
     // Allow PIP to resize to a slightly bigger state upon touch
     private boolean mEnableResize;
     private final Context mContext;
     private final PipBoundsAlgorithm mPipBoundsAlgorithm;
     @NonNull private final PipBoundsState mPipBoundsState;
-    @NonNull private final PipSizeSpecHandler mPipSizeSpecHandler;
+    @NonNull private final SizeSpecSource mSizeSpecSource;
     private final PipUiEventLogger mPipUiEventLogger;
     private final PipDismissTargetHandler mPipDismissTargetHandler;
     private final PipTaskOrganizer mPipTaskOrganizer;
@@ -178,7 +171,7 @@ public class PipTouchHandler {
             PhonePipMenuController menuController,
             PipBoundsAlgorithm pipBoundsAlgorithm,
             @NonNull PipBoundsState pipBoundsState,
-            @NonNull PipSizeSpecHandler pipSizeSpecHandler,
+            @NonNull SizeSpecSource sizeSpecSource,
             PipTaskOrganizer pipTaskOrganizer,
             PipMotionHelper pipMotionHelper,
             FloatingContentCoordinator floatingContentCoordinator,
@@ -189,7 +182,7 @@ public class PipTouchHandler {
         mAccessibilityManager = context.getSystemService(AccessibilityManager.class);
         mPipBoundsAlgorithm = pipBoundsAlgorithm;
         mPipBoundsState = pipBoundsState;
-        mPipSizeSpecHandler = pipSizeSpecHandler;
+        mSizeSpecSource = sizeSpecSource;
         mPipTaskOrganizer = pipTaskOrganizer;
         mMenuController = menuController;
         mPipUiEventLogger = pipUiEventLogger;
@@ -199,11 +192,6 @@ public class PipTouchHandler {
         mMotionHelper = pipMotionHelper;
         mPipDismissTargetHandler = new PipDismissTargetHandler(context, pipUiEventLogger,
                 mMotionHelper, mainExecutor);
-        mPipResizeGestureHandler =
-                new PipResizeGestureHandler(context, pipBoundsAlgorithm, pipBoundsState,
-                        mMotionHelper, pipTaskOrganizer, mPipDismissTargetHandler,
-                        this::getMovementBounds, this::updateMovementBounds, pipUiEventLogger,
-                        menuController, mainExecutor);
         mTouchState = new PipTouchState(ViewConfiguration.get(context),
                 () -> {
                     if (mPipBoundsState.isStashed()) {
@@ -220,6 +208,11 @@ public class PipTouchHandler {
                 },
                 menuController::hideMenu,
                 mainExecutor);
+        mPipResizeGestureHandler =
+                new PipResizeGestureHandler(context, pipBoundsAlgorithm, pipBoundsState,
+                        mMotionHelper, mTouchState, pipTaskOrganizer, mPipDismissTargetHandler,
+                        this::getMovementBounds, this::updateMovementBounds, pipUiEventLogger,
+                        menuController, mainExecutor);
         mConnection = new PipAccessibilityInteractionConnection(mContext, pipBoundsState,
                 mMotionHelper, pipTaskOrganizer, mPipBoundsAlgorithm.getSnapAlgorithm(),
                 this::onAccessibilityShowMenu, this::updateMovementBounds,
@@ -228,7 +221,9 @@ public class PipTouchHandler {
         // TODO(b/181599115): This should really be initializes as part of the pip controller, but
         // until all PIP implementations derive from the controller, just initialize the touch handler
         // if it is needed
-        shellInit.addInitCallback(this::onInit, this);
+        if (!PipUtils.isPip2ExperimentEnabled()) {
+            shellInit.addInitCallback(this::onInit, this);
+        }
     }
 
     /**
@@ -410,7 +405,7 @@ public class PipTouchHandler {
 
         // Calculate the expanded size
         float aspectRatio = (float) normalBounds.width() / normalBounds.height();
-        Size expandedSize = mPipSizeSpecHandler.getDefaultSize(aspectRatio);
+        Size expandedSize = mSizeSpecSource.getDefaultSize(aspectRatio);
         mPipBoundsState.setExpandedBounds(
                 new Rect(0, 0, expandedSize.getWidth(), expandedSize.getHeight()));
         Rect expandedMovementBounds = new Rect();
@@ -425,48 +420,6 @@ public class PipTouchHandler {
         int extraOffset = Math.max(
                 mIsImeShowing ? mImeOffset : 0,
                 !mIsImeShowing && mIsShelfShowing ? mShelfHeight : 0);
-
-        // If this is from an IME or shelf adjustment, then we should move the PiP so that it is not
-        // occluded by the IME or shelf.
-        if (fromImeAdjustment || fromShelfAdjustment) {
-            if (mTouchState.isUserInteracting() && mTouchState.isDragging()) {
-                // Defer the update of the current movement bounds until after the user finishes
-                // touching the screen
-            } else if (mEnablePipKeepClearAlgorithm) {
-                // Ignore moving PiP if keep clear algorithm is enabled, since IME and shelf height
-                // now are accounted for in the keep clear algorithm calculations
-            } else {
-                final boolean isExpanded = mMenuState == MENU_STATE_FULL && willResizeMenu();
-                final Rect toMovementBounds = new Rect();
-                mPipBoundsAlgorithm.getMovementBounds(curBounds, insetBounds,
-                        toMovementBounds, mIsImeShowing ? mImeHeight : 0);
-                final int prevBottom = mPipBoundsState.getMovementBounds().bottom
-                        - mMovementBoundsExtraOffsets;
-                // This is to handle landscape fullscreen IMEs, don't apply the extra offset in this
-                // case
-                final int toBottom = toMovementBounds.bottom < toMovementBounds.top
-                        ? toMovementBounds.bottom
-                        : toMovementBounds.bottom - extraOffset;
-
-                if (isExpanded) {
-                    curBounds.set(mPipBoundsState.getExpandedBounds());
-                    mPipBoundsAlgorithm.getSnapAlgorithm().applySnapFraction(curBounds,
-                            toMovementBounds, mSavedSnapFraction);
-                }
-
-                if (prevBottom < toBottom) {
-                    // The movement bounds are expanding
-                    if (curBounds.top > prevBottom - mBottomOffsetBufferPx) {
-                        mMotionHelper.animateToOffset(curBounds, toBottom - curBounds.top);
-                    }
-                } else if (prevBottom > toBottom) {
-                    // The movement bounds are shrinking
-                    if (curBounds.top > toBottom - mBottomOffsetBufferPx) {
-                        mMotionHelper.animateToOffset(curBounds, toBottom - curBounds.top);
-                    }
-                }
-            }
-        }
 
         // Update the movement bounds after doing the calculations based on the old movement bounds
         // above
@@ -514,10 +467,10 @@ public class PipTouchHandler {
     private void updatePinchResizeSizeConstraints(float aspectRatio) {
         final int minWidth, minHeight, maxWidth, maxHeight;
 
-        minWidth = mPipSizeSpecHandler.getMinSize(aspectRatio).getWidth();
-        minHeight = mPipSizeSpecHandler.getMinSize(aspectRatio).getHeight();
-        maxWidth = mPipSizeSpecHandler.getMaxSize(aspectRatio).getWidth();
-        maxHeight = mPipSizeSpecHandler.getMaxSize(aspectRatio).getHeight();
+        minWidth = mSizeSpecSource.getMinSize(aspectRatio).getWidth();
+        minHeight = mSizeSpecSource.getMinSize(aspectRatio).getHeight();
+        maxWidth = mSizeSpecSource.getMaxSize(aspectRatio).getWidth();
+        maxHeight = mSizeSpecSource.getMaxSize(aspectRatio).getHeight();
 
         mPipResizeGestureHandler.updateMinSize(minWidth, minHeight);
         mPipResizeGestureHandler.updateMaxSize(maxWidth, maxHeight);
@@ -556,6 +509,11 @@ public class PipTouchHandler {
             return true;
         }
 
+        // do not process input event if not allowed
+        if (!mTouchState.getAllowInputEvents()) {
+            return true;
+        }
+
         MotionEvent ev = (MotionEvent) inputEvent;
         if (!mPipBoundsState.isStashed() && mPipResizeGestureHandler.willStartResizeGesture(ev)) {
             // Initialize the touch state for the gesture, but immediately reset to invalidate the
@@ -583,6 +541,13 @@ public class PipTouchHandler {
             // respect touch input velocity if the object is dragged out and then flung.
             mTouchState.addMovementToVelocityTracker(ev);
 
+            return true;
+        }
+
+        // Ignore the motion event When the entry animation is waiting to be started
+        if (!mTouchState.isUserInteracting() && mPipTaskOrganizer.isEntryScheduled()) {
+            ProtoLog.wtf(ShellProtoLogGroup.WM_SHELL_PICTURE_IN_PICTURE,
+                    "%s: Waiting to start the entry animation, skip the motion event.", TAG);
             return true;
         }
 
@@ -814,13 +779,10 @@ public class PipTouchHandler {
     }
 
     /**
-     * Resizes the pip window and updates user resized bounds
-     *
-     * @param bounds target bounds to resize to
-     * @param snapFraction snap fraction to apply after resizing
+     * Sets the user resize bounds tracked by {@link PipResizeGestureHandler}
      */
-    void userResizeTo(Rect bounds, float snapFraction) {
-        mPipResizeGestureHandler.userResizeTo(bounds, snapFraction);
+    void setUserResizeBounds(Rect bounds) {
+        mPipResizeGestureHandler.setUserResizeBounds(bounds);
     }
 
     /**

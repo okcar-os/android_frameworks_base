@@ -57,6 +57,7 @@ import android.content.ComponentName;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.overlay.OverlayPaths;
+import android.content.pm.parsing.FrameworkParsingPackageUtils;
 import android.content.pm.parsing.result.ParseResult;
 import android.content.pm.parsing.result.ParseTypeImpl;
 import android.content.pm.permission.SplitPermissionInfoParcelable;
@@ -1454,7 +1455,7 @@ public class PackageParser {
                     verified.getPublicKeys(),
                     verified.getPastSigningCertificates());
         } else {
-            if (!Signature.areExactMatch(pkg.mSigningDetails.signatures,
+            if (!Signature.areExactArraysMatch(pkg.mSigningDetails.signatures,
                     verified.getSignatures())) {
                 throw new PackageParserException(
                         INSTALL_PARSE_FAILED_INCONSISTENT_CERTIFICATES,
@@ -1465,8 +1466,8 @@ public class PackageParser {
 
     private static AssetManager newConfiguredAssetManager() {
         AssetManager assetManager = new AssetManager();
-        assetManager.setConfiguration(0, 0, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                Build.VERSION.RESOURCES_SDK_INT);
+        assetManager.setConfiguration(0, 0, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, Build.VERSION.RESOURCES_SDK_INT);
         return assetManager;
     }
 
@@ -1767,7 +1768,7 @@ public class PackageParser {
         }
 
         // Check to see if overlay should be excluded based on system property condition
-        if (!checkRequiredSystemProperties(requiredSystemPropertyName,
+        if (!FrameworkParsingPackageUtils.checkRequiredSystemProperties(requiredSystemPropertyName,
                 requiredSystemPropertyValue)) {
             Slog.i(TAG, "Skipping target and overlay pair " + targetPackage + " and "
                     + codePath + ": overlay ignored due to required system property: "
@@ -2077,7 +2078,8 @@ public class PackageParser {
                 }
 
                 // check to see if overlay should be excluded based on system property condition
-                if (!checkRequiredSystemProperties(propName, propValue)) {
+                if (!FrameworkParsingPackageUtils.checkRequiredSystemProperties(propName,
+                        propValue)) {
                     Slog.i(TAG, "Skipping target and overlay pair " + pkg.mOverlayTarget + " and "
                         + pkg.baseCodePath+ ": overlay ignored due to required system property: "
                         + propName + " with value: " + propValue);
@@ -2519,46 +2521,6 @@ public class PackageParser {
         }
 
         return pkg;
-    }
-
-    /**
-     * Returns {@code true} if both the property name and value are empty or if the given system
-     * property is set to the specified value. Properties can be one or more, and if properties are
-     * more than one, they must be separated by comma, and count of names and values must be equal,
-     * and also every given system property must be set to the corresponding value.
-     * In all other cases, returns {@code false}
-     */
-    public static boolean checkRequiredSystemProperties(@Nullable String rawPropNames,
-            @Nullable String rawPropValues) {
-        if (TextUtils.isEmpty(rawPropNames) || TextUtils.isEmpty(rawPropValues)) {
-            if (!TextUtils.isEmpty(rawPropNames) || !TextUtils.isEmpty(rawPropValues)) {
-                // malformed condition - incomplete
-                Slog.w(TAG, "Disabling overlay - incomplete property :'" + rawPropNames
-                        + "=" + rawPropValues + "' - require both requiredSystemPropertyName"
-                        + " AND requiredSystemPropertyValue to be specified.");
-                return false;
-            }
-            // no valid condition set - so no exclusion criteria, overlay will be included.
-            return true;
-        }
-
-        final String[] propNames = rawPropNames.split(",");
-        final String[] propValues = rawPropValues.split(",");
-
-        if (propNames.length != propValues.length) {
-            Slog.w(TAG, "Disabling overlay - property :'" + rawPropNames
-                    + "=" + rawPropValues + "' - require both requiredSystemPropertyName"
-                    + " AND requiredSystemPropertyValue lists to have the same size.");
-            return false;
-        }
-        for (int i = 0; i < propNames.length; i++) {
-            // Check property value: make sure it is both set and equal to expected value
-            final String currValue = SystemProperties.get(propNames[i]);
-            if (!TextUtils.equals(currValue, propValues[i])) {
-                return false;
-            }
-        }
-        return true;
     }
 
     /**
@@ -6477,7 +6439,7 @@ public class PackageParser {
                     }
                 }
             } else {
-                return Signature.areEffectiveMatch(oldDetails.signatures, signatures);
+                return Signature.areEffectiveArraysMatch(oldDetails.signatures, signatures);
             }
             return false;
         }
@@ -6625,7 +6587,7 @@ public class PackageParser {
 
         /** Returns true if the signatures in this and other match exactly. */
         public boolean signaturesMatchExactly(SigningDetails other) {
-            return Signature.areExactMatch(this.signatures, other.signatures);
+            return Signature.areExactArraysMatch(this.signatures, other.signatures);
         }
 
         @Override
@@ -6677,7 +6639,7 @@ public class PackageParser {
             SigningDetails that = (SigningDetails) o;
 
             if (signatureSchemeVersion != that.signatureSchemeVersion) return false;
-            if (!Signature.areExactMatch(signatures, that.signatures)) return false;
+            if (!Signature.areExactArraysMatch(signatures, that.signatures)) return false;
             if (publicKeys != null) {
                 if (!publicKeys.equals((that.publicKeys))) {
                     return false;
@@ -6686,7 +6648,8 @@ public class PackageParser {
                 return false;
             }
 
-            // can't use Signature.areExactMatch() because order matters with the past signing certs
+            // can't use Signature.areExactArraysMatch() because order matters with the past
+            // signing certs
             if (!Arrays.equals(pastSigningCertificates, that.pastSigningCertificates)) {
                 return false;
             }
@@ -8014,7 +7977,7 @@ public class PackageParser {
             ai.enabled = true;
         } else if (state.getEnabledState()
                 == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_UNTIL_USED) {
-            ai.enabled = (flags&PackageManager.GET_DISABLED_UNTIL_USED_COMPONENTS) != 0;
+            ai.enabled = (flags & PackageManager.GET_DISABLED_UNTIL_USED_COMPONENTS) != 0;
         } else if (state.getEnabledState() == PackageManager.COMPONENT_ENABLED_STATE_DISABLED
                 || state.getEnabledState()
                 == PackageManager.COMPONENT_ENABLED_STATE_DISABLED_USER) {
@@ -9020,8 +8983,8 @@ public class PackageParser {
             }
 
             AssetManager assets = new AssetManager();
-            assets.setConfiguration(0, 0, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    Build.VERSION.RESOURCES_SDK_INT);
+            assets.setConfiguration(0, 0, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, Build.VERSION.RESOURCES_SDK_INT);
             assets.setApkAssets(apkAssets, false /*invalidateCaches*/);
 
             mCachedAssetManager = assets;
@@ -9095,8 +9058,8 @@ public class PackageParser {
 
         private static AssetManager createAssetManagerWithAssets(ApkAssets[] apkAssets) {
             final AssetManager assets = new AssetManager();
-            assets.setConfiguration(0, 0, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    Build.VERSION.RESOURCES_SDK_INT);
+            assets.setConfiguration(0, 0, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, Build.VERSION.RESOURCES_SDK_INT);
             assets.setApkAssets(apkAssets, false /*invalidateCaches*/);
             return assets;
         }

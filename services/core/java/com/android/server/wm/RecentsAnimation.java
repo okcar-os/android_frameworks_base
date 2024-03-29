@@ -16,6 +16,7 @@
 
 package com.android.server.wm;
 
+import static android.app.ActivityManager.PROCESS_STATE_CACHED_ACTIVITY;
 import static android.app.ActivityManager.START_TASK_TO_FRONT;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_HOME;
 import static android.app.WindowConfiguration.ACTIVITY_TYPE_RECENTS;
@@ -117,6 +118,11 @@ class RecentsAnimation implements RecentsAnimationCallbacks, OnRootTaskOrderChan
                 return;
             }
             if (targetActivity.attachedToProcess()) {
+                if (targetActivity.app.getCurrentProcState() >= PROCESS_STATE_CACHED_ACTIVITY) {
+                    Slog.v(TAG, "Skip preload recents for cached proc " + targetActivity.app);
+                    // The process may be frozen that cannot receive binder call.
+                    return;
+                }
                 // The activity may be relaunched if it cannot handle the current configuration
                 // changes. The activity will be paused state if it is relaunched, otherwise it
                 // keeps the original stopped state.
@@ -293,8 +299,7 @@ class RecentsAnimation implements RecentsAnimationCallbacks, OnRootTaskOrderChan
             // Just to be sure end the launch hint in case the target activity was never launched.
             // However, if we're keeping the activity and making it visible, we can leave it on.
             if (reorderMode != REORDER_KEEP_IN_PLACE) {
-                mService.endLaunchPowerMode(
-                        ActivityTaskManagerService.POWER_MODE_REASON_START_ACTIVITY);
+                mService.endPowerMode(ActivityTaskManagerService.POWER_MODE_REASON_START_ACTIVITY);
             }
 
             // Once the target is shown, prevent spurious background app switches
@@ -302,7 +307,7 @@ class RecentsAnimation implements RecentsAnimationCallbacks, OnRootTaskOrderChan
                 mService.stopAppSwitches();
             }
 
-            mWindowManager.inSurfaceTransaction(() -> {
+            inSurfaceTransaction(() -> {
                 Trace.traceBegin(TRACE_TAG_WINDOW_MANAGER,
                         "RecentsAnimation#onAnimationFinished_inSurfaceTransaction");
                 mService.deferWindowLayout();
@@ -412,6 +417,11 @@ class RecentsAnimation implements RecentsAnimationCallbacks, OnRootTaskOrderChan
                 }
             });
         }
+    }
+
+    // No-op wrapper to keep legacy code.
+    private static void inSurfaceTransaction(Runnable exec) {
+        exec.run();
     }
 
     /** Gives the owner of recents animation higher priority. */

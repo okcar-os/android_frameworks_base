@@ -16,7 +16,11 @@
 
 package com.android.server.wm;
 
-import static android.app.TaskInfo.cameraCompatControlStateToString;
+import static android.app.ActivityTaskManager.INVALID_TASK_ID;
+import static android.app.AppCompatTaskInfo.cameraCompatControlStateToString;
+import static android.window.StartingWindowRemovalInfo.DEFER_MODE_NONE;
+import static android.window.StartingWindowRemovalInfo.DEFER_MODE_NORMAL;
+import static android.window.StartingWindowRemovalInfo.DEFER_MODE_ROTATION;
 
 import static com.android.internal.protolog.ProtoLogGroup.WM_DEBUG_WINDOW_ORGANIZER;
 import static com.android.server.wm.ActivityTaskManagerService.enforceTaskPermission;
@@ -31,6 +35,7 @@ import android.app.ActivityManager.RunningTaskInfo;
 import android.app.WindowConfiguration;
 import android.content.Intent;
 import android.content.pm.ParceledListSlice;
+import android.content.res.Configuration;
 import android.graphics.Rect;
 import android.os.Binder;
 import android.os.IBinder;
@@ -43,6 +48,7 @@ import android.view.Display;
 import android.view.SurfaceControl;
 import android.window.ITaskOrganizer;
 import android.window.ITaskOrganizerController;
+import android.window.IWindowlessStartingSurfaceCallback;
 import android.window.SplashScreenView;
 import android.window.StartingWindowInfo;
 import android.window.StartingWindowRemovalInfo;
@@ -55,9 +61,9 @@ import com.android.internal.protolog.common.ProtoLog;
 import com.android.internal.util.ArrayUtils;
 
 import java.io.PrintWriter;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.HashSet;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.WeakHashMap;
 import java.util.function.Consumer;
@@ -473,10 +479,10 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
     private final WindowManagerGlobalLock mGlobalLock;
 
     // List of task organizers by priority
-    private final LinkedList<ITaskOrganizer> mTaskOrganizers = new LinkedList<>();
+    private final ArrayDeque<ITaskOrganizer> mTaskOrganizers = new ArrayDeque<>();
     private final ArrayMap<IBinder, TaskOrganizerState> mTaskOrganizerStates = new ArrayMap<>();
     // Set of organized tasks (by taskId) that dispatch back pressed to their organizers
-    private final HashSet<Integer> mInterceptBackPressedOnRootTasks = new HashSet();
+    private final HashSet<Integer> mInterceptBackPressedOnRootTasks = new HashSet<>();
 
     private Consumer<Runnable> mDeferTaskOrgCallbacksConsumer;
 
@@ -647,7 +653,7 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
         if (rootTask == null || activity.mStartingData == null) {
             return false;
         }
-        final ITaskOrganizer lastOrganizer = mTaskOrganizers.peekLast();
+        final ITaskOrganizer lastOrganizer = getTaskOrganizer();
         if (lastOrganizer == null) {
             return false;
         }
@@ -656,9 +662,10 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
             info.splashScreenThemeResId = launchTheme;
         }
         info.taskSnapshot = taskSnapshot;
+        info.appToken = activity.token;
         // make this happen prior than prepare surface
         try {
-            lastOrganizer.addStartingWindow(info, activity.token);
+            lastOrganizer.addStartingWindow(info);
         } catch (RemoteException e) {
             Slog.e(TAG, "Exception sending onTaskStart callback", e);
             return false;
@@ -666,24 +673,38 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
         return true;
     }
 
-    void removeStartingWindow(Task task, boolean prepareAnimation) {
+    void removeStartingWindow(Task task, ITaskOrganizer taskOrganizer, boolean prepareAnimation,
+            boolean hasImeSurface) {
         final Task rootTask = task.getRootTask();
         if (rootTask == null) {
             return;
         }
-        final ITaskOrganizer lastOrganizer = mTaskOrganizers.peekLast();
+        final ITaskOrganizer lastOrganizer = taskOrganizer != null ? taskOrganizer
+                : getTaskOrganizer();
         if (lastOrganizer == null) {
             return;
         }
         final StartingWindowRemovalInfo removalInfo = new StartingWindowRemovalInfo();
         removalInfo.taskId = task.mTaskId;
         removalInfo.playRevealAnimation = prepareAnimation
+                && task.getDisplayContent() != null
                 && task.getDisplayInfo().state == Display.STATE_ON;
         final boolean playShiftUpAnimation = !task.inMultiWindowMode();
         final ActivityRecord topActivity = task.topActivityContainsStartingWindow();
         if (topActivity != null) {
-            removalInfo.deferRemoveForIme = topActivity.mDisplayContent
-                    .mayImeShowOnLaunchingActivity(topActivity);
+            // Set defer remove mode for IME
+            final DisplayContent dc = topActivity.getDisplayContent();
+            if (hasImeSurface) {
+                if (topActivity.isVisibleRequested() && dc.mInputMethodWindow != null
+                        && dc.isFixedRotationLaunchingApp(topActivity)) {
+                    removalInfo.deferRemoveForImeMode = DEFER_MODE_ROTATION;
+                } else {
+                    removalInfo.deferRemoveForImeMode = DEFER_MODE_NORMAL;
+                }
+            } else {
+                removalInfo.deferRemoveForImeMode = DEFER_MODE_NONE;
+            }
+
             final WindowState mainWindow =
                     topActivity.findMainWindow(false/* includeStartingApp */);
             // No app window for this activity, app might be crashed.
@@ -704,12 +725,64 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
         }
     }
 
-    boolean copySplashScreenView(Task task) {
+    /**
+     * Create a starting surface which attach on a given surface.
+     * @param activity Target activity, this isn't necessary to be the top activity.
+     * @param root The root surface which the created surface will attach on.
+     * @param taskSnapshot Whether to draw snapshot.
+     * @param callback Called when surface is drawn and attached to the root surface.
+     * @return The taskId, this is a token and should be used to remove the surface, even if
+     *         the task was removed from hierarchy.
+     */
+    int addWindowlessStartingSurface(Task task, ActivityRecord activity, SurfaceControl root,
+            TaskSnapshot taskSnapshot, Configuration configuration,
+            IWindowlessStartingSurfaceCallback callback) {
+        final Task rootTask = task.getRootTask();
+        if (rootTask == null) {
+            return INVALID_TASK_ID;
+        }
+        final ITaskOrganizer lastOrganizer = mTaskOrganizers.peekLast();
+        if (lastOrganizer == null) {
+            return INVALID_TASK_ID;
+        }
+        final StartingWindowInfo info = task.getStartingWindowInfo(activity);
+        info.taskInfo.configuration.setTo(configuration);
+        info.taskInfo.taskDescription = activity.taskDescription;
+        info.taskSnapshot = taskSnapshot;
+        info.windowlessStartingSurfaceCallback = callback;
+        info.rootSurface = root;
+        try {
+            lastOrganizer.addStartingWindow(info);
+        } catch (RemoteException e) {
+            Slog.e(TAG, "Exception sending addWindowlessStartingSurface ", e);
+            return INVALID_TASK_ID;
+        }
+        return task.mTaskId;
+    }
+
+    void removeWindowlessStartingSurface(int taskId, boolean immediately) {
+        final ITaskOrganizer lastOrganizer = mTaskOrganizers.peekLast();
+        if (lastOrganizer == null || taskId == 0) {
+            return;
+        }
+        final StartingWindowRemovalInfo removalInfo = new StartingWindowRemovalInfo();
+        removalInfo.taskId = taskId;
+        removalInfo.windowlessSurface = true;
+        removalInfo.removeImmediately = immediately;
+        try {
+            lastOrganizer.removeStartingWindow(removalInfo);
+        } catch (RemoteException e) {
+            Slog.e(TAG, "Exception sending removeWindowlessStartingSurface ", e);
+        }
+    }
+
+    boolean copySplashScreenView(Task task, ITaskOrganizer taskOrganizer) {
         final Task rootTask = task.getRootTask();
         if (rootTask == null) {
             return false;
         }
-        final ITaskOrganizer lastOrganizer = mTaskOrganizers.peekLast();
+        final ITaskOrganizer lastOrganizer = taskOrganizer != null ? taskOrganizer
+                : getTaskOrganizer();
         if (lastOrganizer == null) {
             return false;
         }
@@ -722,18 +795,22 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
         return true;
     }
 
+    boolean isSupportWindowlessStartingSurface() {
+        final ITaskOrganizer lastOrganizer = mTaskOrganizers.peekLast();
+        return lastOrganizer != null;
+    }
     /**
      * Notify the shell ({@link com.android.wm.shell.ShellTaskOrganizer} that the client has
      * removed the splash screen view.
      * @see com.android.wm.shell.ShellTaskOrganizer#onAppSplashScreenViewRemoved(int)
      * @see SplashScreenView#remove()
      */
-    public void onAppSplashScreenViewRemoved(Task task) {
+    public void onAppSplashScreenViewRemoved(Task task, ITaskOrganizer organizer) {
         final Task rootTask = task.getRootTask();
         if (rootTask == null) {
             return;
         }
-        final ITaskOrganizer lastOrganizer = mTaskOrganizers.peekLast();
+        final ITaskOrganizer lastOrganizer = organizer != null ? organizer : getTaskOrganizer();
         if (lastOrganizer == null) {
             return;
         }
@@ -1105,25 +1182,8 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
         }
     }
 
-    @Override
-    public void setOrientationRequestPolicy(boolean isIgnoreOrientationRequestDisabled,
-            @Nullable int[] fromOrientations, @Nullable int[] toOrientations) {
-        enforceTaskPermission("setOrientationRequestPolicy()");
-        final long origId = Binder.clearCallingIdentity();
-        try {
-            synchronized (mGlobalLock) {
-                mService.mWindowManager
-                        .setOrientationRequestPolicy(isIgnoreOrientationRequestDisabled,
-                                fromOrientations, toOrientations);
-            }
-        } finally {
-            Binder.restoreCallingIdentity(origId);
-        }
-    }
-
     public boolean handleInterceptBackPressedOnTaskRoot(Task task) {
-        if (task == null || !task.isOrganized()
-                || !mInterceptBackPressedOnRootTasks.contains(task.mTaskId)) {
+        if (!shouldInterceptBackPressedOnRootTask(task)) {
             return false;
         }
         final TaskOrganizerPendingEventsQueue pendingEventsQueue =
@@ -1156,13 +1216,24 @@ class TaskOrganizerController extends ITaskOrganizerController.Stub {
         return true;
     }
 
+    boolean shouldInterceptBackPressedOnRootTask(Task task) {
+        return task != null && task.isOrganized()
+                && mInterceptBackPressedOnRootTasks.contains(task.mTaskId);
+    }
+
     public void dump(PrintWriter pw, String prefix) {
         final String innerPrefix = prefix + "  ";
         pw.print(prefix); pw.println("TaskOrganizerController:");
-        for (final TaskOrganizerState state : mTaskOrganizerStates.values()) {
+        final ITaskOrganizer lastOrganizer = mTaskOrganizers.peekLast();
+        for (ITaskOrganizer organizer : mTaskOrganizers) {
+            final TaskOrganizerState state = mTaskOrganizerStates.get(organizer.asBinder());
             final ArrayList<Task> tasks = state.mOrganizedTasks;
             pw.print(innerPrefix + "  ");
-            pw.println(state.mOrganizer.mTaskOrganizer + " uid=" + state.mUid + ":");
+            pw.print(state.mOrganizer.mTaskOrganizer + " uid=" + state.mUid);
+            if (lastOrganizer == organizer) {
+                pw.print(" (active)");
+            }
+            pw.println(':');
             for (int k = 0; k < tasks.size(); k++) {
                 final Task task = tasks.get(k);
                 final int mode = task.getWindowingMode();

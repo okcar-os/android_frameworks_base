@@ -18,31 +18,38 @@ import android.content.res.Resources
 import android.graphics.drawable.Drawable
 import android.view.LayoutInflater
 import com.android.systemui.customization.R
-import com.android.systemui.plugins.ClockController
-import com.android.systemui.plugins.ClockId
-import com.android.systemui.plugins.ClockMetadata
-import com.android.systemui.plugins.ClockProvider
-import com.android.systemui.plugins.ClockSettings
+import com.android.systemui.plugins.clocks.ClockController
+import com.android.systemui.plugins.clocks.ClockId
+import com.android.systemui.plugins.clocks.ClockMetadata
+import com.android.systemui.plugins.clocks.ClockProvider
+import com.android.systemui.plugins.clocks.ClockSettings
 
 private val TAG = DefaultClockProvider::class.simpleName
-const val DEFAULT_CLOCK_NAME = "Default Clock"
 const val DEFAULT_CLOCK_ID = "DEFAULT"
 
 /** Provides the default system clock */
-class DefaultClockProvider constructor(
+class DefaultClockProvider(
     val ctx: Context,
     val layoutInflater: LayoutInflater,
-    val resources: Resources
+    val resources: Resources,
+    val hasStepClockAnimation: Boolean = false,
+    val migratedClocks: Boolean = false
 ) : ClockProvider {
-    override fun getClocks(): List<ClockMetadata> =
-        listOf(ClockMetadata(DEFAULT_CLOCK_ID, DEFAULT_CLOCK_NAME))
+    override fun getClocks(): List<ClockMetadata> = listOf(ClockMetadata(DEFAULT_CLOCK_ID))
 
     override fun createClock(settings: ClockSettings): ClockController {
         if (settings.clockId != DEFAULT_CLOCK_ID) {
             throw IllegalArgumentException("${settings.clockId} is unsupported by $TAG")
         }
 
-        return DefaultClockController(ctx, layoutInflater, resources, settings)
+        return DefaultClockController(
+            ctx,
+            layoutInflater,
+            resources,
+            settings,
+            hasStepClockAnimation,
+            migratedClocks,
+        )
     }
 
     override fun getClockThumbnail(id: ClockId): Drawable? {

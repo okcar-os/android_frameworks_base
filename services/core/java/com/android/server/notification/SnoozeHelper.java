@@ -30,12 +30,12 @@ import android.util.ArrayMap;
 import android.util.IntArray;
 import android.util.Log;
 import android.util.Slog;
-import android.util.TypedXmlPullParser;
-import android.util.TypedXmlSerializer;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto;
+import com.android.modules.utils.TypedXmlPullParser;
+import com.android.modules.utils.TypedXmlSerializer;
 import com.android.server.pm.PackageManagerService;
 
 import org.xmlpull.v1.XmlPullParser;
@@ -295,6 +295,20 @@ public final class SnoozeHelper {
         synchronized (mLock) {
             if (mSnoozedNotifications.containsKey(record.getKey())) {
                 mSnoozedNotifications.put(record.getKey(), record);
+            }
+        }
+    }
+
+    /**
+     * Unsnooze & repost all snoozed notifications for userId and its profiles
+     */
+    protected void repostAll(IntArray userIds) {
+        synchronized (mLock) {
+            List<NotificationRecord> snoozedNotifications = getSnoozed();
+            for (NotificationRecord r : snoozedNotifications) {
+                if (userIds.binarySearch(r.getUserId()) >= 0) {
+                    repost(r.getKey(), r.getUserId(), false);
+                }
             }
         }
     }

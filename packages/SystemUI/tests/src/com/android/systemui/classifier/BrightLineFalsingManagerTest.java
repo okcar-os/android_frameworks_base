@@ -94,7 +94,6 @@ public class BrightLineFalsingManagerTest extends SysuiTestCase {
                 mMetricsLogger, mClassifiers, mSingleTapClassifier, mLongTapClassifier,
                 mDoubleTapClassifier, mHistoryTracker, mKeyguardStateController,
                 mAccessibilityManager, false, mFakeFeatureFlags);
-        mFakeFeatureFlags.set(Flags.FALSING_FOR_LONG_TAPS, true);
         mFakeFeatureFlags.set(Flags.FALSING_OFF_FOR_UNFOLDED, true);
     }
 
@@ -186,6 +185,13 @@ public class BrightLineFalsingManagerTest extends SysuiTestCase {
     public void testSkipUnfolded() {
         assertThat(mBrightLineFalsingManager.isFalseTouch(Classifier.GENERIC)).isTrue();
         when(mFalsingDataProvider.isUnfolded()).thenReturn(true);
+        assertThat(mBrightLineFalsingManager.isFalseTouch(Classifier.GENERIC)).isFalse();
+    }
+
+    @Test
+    public void testTrackpadGesture() {
+        assertThat(mBrightLineFalsingManager.isFalseTouch(Classifier.GENERIC)).isTrue();
+        when(mFalsingDataProvider.isFromTrackpad()).thenReturn(true);
         assertThat(mBrightLineFalsingManager.isFalseTouch(Classifier.GENERIC)).isFalse();
     }
 }

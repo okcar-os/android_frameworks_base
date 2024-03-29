@@ -18,16 +18,17 @@ package com.android.compose.animation
 
 import android.view.View
 import androidx.savedstate.SavedStateRegistryOwner
-import androidx.savedstate.ViewTreeSavedStateRegistryOwner as AndroidXViewTreeSavedStateRegistryOwner
+import androidx.savedstate.findViewTreeSavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 
 // TODO(b/262222023): Remove this workaround and import the new savedstate libraries in tm-qpr-dev
 // instead.
 object ViewTreeSavedStateRegistryOwner {
     fun set(view: View, owner: SavedStateRegistryOwner?) {
-        AndroidXViewTreeSavedStateRegistryOwner.set(view, owner)
+        view.setViewTreeSavedStateRegistryOwner(owner)
     }
 
     fun get(view: View): SavedStateRegistryOwner? {
-        return AndroidXViewTreeSavedStateRegistryOwner.get(view)
+        return view.findViewTreeSavedStateRegistryOwner()
     }
 }

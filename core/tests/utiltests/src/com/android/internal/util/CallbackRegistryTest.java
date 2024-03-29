@@ -15,18 +15,21 @@
  */
 package com.android.internal.util;
 
-import junit.framework.TestCase;
-
-import org.junit.Test;
-
-import java.util.ArrayList;
-
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 
-public class CallbackRegistryTest extends TestCase {
+import androidx.test.runner.AndroidJUnit4;
+
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
+import java.util.ArrayList;
+import java.util.Objects;
+
+@RunWith(AndroidJUnit4.class)
+public class CallbackRegistryTest {
 
     final Integer callback1 = 1;
     final Integer callback2 = 2;
@@ -39,16 +42,17 @@ public class CallbackRegistryTest extends TestCase {
     Integer argValue;
 
     private void addNotifyCount(Integer callback) {
-        if (callback == callback1) {
+        if (Objects.equals(callback, callback1)) {
             notify1++;
-        } else if (callback == callback2) {
+        } else if (Objects.equals(callback, callback2)) {
             notify2++;
-        } else if (callback == callback3) {
+        } else if (Objects.equals(callback, callback3)) {
             notify3++;
         }
         deepNotifyCount[callback]++;
     }
 
+    @Test
     public void testAddListener() {
         CallbackRegistry.NotifierCallback<Integer, CallbackRegistryTest, Integer> notifier =
                 new CallbackRegistry.NotifierCallback<Integer, CallbackRegistryTest, Integer>() {
@@ -88,6 +92,7 @@ public class CallbackRegistryTest extends TestCase {
         assertEquals(otherListener, callbacks.get(0));
     }
 
+    @Test
     public void testSimpleNotify() {
         CallbackRegistry.NotifierCallback<Integer, CallbackRegistryTest, Integer> notifier =
                 new CallbackRegistry.NotifierCallback<Integer, CallbackRegistryTest, Integer>() {
@@ -107,6 +112,7 @@ public class CallbackRegistryTest extends TestCase {
         assertEquals(1, notify2);
     }
 
+    @Test
     public void testRemoveWhileNotifying() {
         CallbackRegistry.NotifierCallback<Integer, CallbackRegistryTest, Integer> notifier =
                 new CallbackRegistry.NotifierCallback<Integer, CallbackRegistryTest, Integer>() {
@@ -114,7 +120,7 @@ public class CallbackRegistryTest extends TestCase {
                     public void onNotifyCallback(Integer callback, CallbackRegistryTest sender,
                             int arg1, Integer arg) {
                         addNotifyCount(callback);
-                        if (callback == callback1) {
+                        if (Objects.equals(callback, callback1)) {
                             registry.remove(callback1);
                             registry.remove(callback2);
                         }
@@ -134,6 +140,7 @@ public class CallbackRegistryTest extends TestCase {
         assertEquals(callback3, callbacks.get(0));
     }
 
+    @Test
     public void testDeepRemoveWhileNotifying() {
         CallbackRegistry.NotifierCallback<Integer, CallbackRegistryTest, Integer> notifier =
                 new CallbackRegistry.NotifierCallback<Integer, CallbackRegistryTest, Integer>() {
@@ -158,6 +165,7 @@ public class CallbackRegistryTest extends TestCase {
         assertEquals(0, callbacks.size());
     }
 
+    @Test
     public void testAddRemovedListener() {
 
         CallbackRegistry.NotifierCallback<Integer, CallbackRegistryTest, Integer> notifier =
@@ -166,9 +174,9 @@ public class CallbackRegistryTest extends TestCase {
                     public void onNotifyCallback(Integer callback, CallbackRegistryTest sender,
                             int arg1, Integer arg) {
                         addNotifyCount(callback);
-                        if (callback == callback1) {
+                        if (Objects.equals(callback, callback1)) {
                             registry.remove(callback2);
-                        } else if (callback == callback3) {
+                        } else if (Objects.equals(callback, callback3)) {
                             registry.add(callback2);
                         }
                     }
@@ -190,6 +198,7 @@ public class CallbackRegistryTest extends TestCase {
         assertEquals(1, notify3);
     }
 
+    @Test
     public void testVeryDeepRemoveWhileNotifying() {
         final Integer[] callbacks = new Integer[deepNotifyCount.length];
         for (int i = 0; i < callbacks.length; i++) {
@@ -220,6 +229,7 @@ public class CallbackRegistryTest extends TestCase {
         assertEquals(0, callbackList.size());
     }
 
+    @Test
     public void testClear() {
         CallbackRegistry.NotifierCallback<Integer, CallbackRegistryTest, Integer> notifier =
                 new CallbackRegistry.NotifierCallback<Integer, CallbackRegistryTest, Integer>() {
@@ -244,6 +254,7 @@ public class CallbackRegistryTest extends TestCase {
         }
     }
 
+    @Test
     public void testNestedClear() {
         CallbackRegistry.NotifierCallback<Integer, CallbackRegistryTest, Integer> notifier =
                 new CallbackRegistry.NotifierCallback<Integer, CallbackRegistryTest, Integer>() {
@@ -267,6 +278,7 @@ public class CallbackRegistryTest extends TestCase {
         assertEquals(0, callbackList.size());
     }
 
+    @Test
     public void testIsEmpty() throws Exception {
         CallbackRegistry.NotifierCallback<Integer, CallbackRegistryTest, Integer> notifier =
                 new CallbackRegistry.NotifierCallback<Integer, CallbackRegistryTest, Integer>() {
@@ -283,6 +295,7 @@ public class CallbackRegistryTest extends TestCase {
         assertFalse(registry.isEmpty());
     }
 
+    @Test
     public void testClone() throws Exception {
         CallbackRegistry.NotifierCallback<Integer, CallbackRegistryTest, Integer> notifier =
                 new CallbackRegistry.NotifierCallback<Integer, CallbackRegistryTest, Integer>() {

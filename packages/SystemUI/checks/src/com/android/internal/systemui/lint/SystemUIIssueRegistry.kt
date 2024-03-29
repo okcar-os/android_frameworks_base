@@ -40,7 +40,9 @@ class SystemUIIssueRegistry : IssueRegistry() {
                 SoftwareBitmapDetector.ISSUE,
                 NonInjectedServiceDetector.ISSUE,
                 StaticSettingsProviderDetector.ISSUE,
-                DemotingTestWithoutBugDetector.ISSUE
+                DemotingTestWithoutBugDetector.ISSUE,
+                TestFunctionNameViolationDetector.ISSUE,
+                MissingApacheLicenseDetector.ISSUE,
             )
 
     override val api: Int

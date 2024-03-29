@@ -21,14 +21,14 @@ import android.content.res.Configuration.ORIENTATION_PORTRAIT
 import android.content.res.Configuration.Orientation
 import android.service.quicksettings.Tile
 import android.view.View
+import com.android.systemui.log.ConstantStringsLogger
+import com.android.systemui.log.ConstantStringsLoggerImpl
+import com.android.systemui.log.LogBuffer
+import com.android.systemui.log.core.LogLevel.DEBUG
+import com.android.systemui.log.core.LogLevel.ERROR
+import com.android.systemui.log.core.LogLevel.VERBOSE
 import com.android.systemui.log.dagger.QSConfigLog
 import com.android.systemui.log.dagger.QSLog
-import com.android.systemui.plugins.log.ConstantStringsLogger
-import com.android.systemui.plugins.log.ConstantStringsLoggerImpl
-import com.android.systemui.plugins.log.LogBuffer
-import com.android.systemui.plugins.log.LogLevel.DEBUG
-import com.android.systemui.plugins.log.LogLevel.ERROR
-import com.android.systemui.plugins.log.LogLevel.VERBOSE
 import com.android.systemui.plugins.qs.QSTile
 import com.android.systemui.statusbar.StatusBarState
 import com.google.errorprone.annotations.CompileTimeConstant
@@ -222,16 +222,8 @@ constructor(
                 str2 = state.label?.toString()
                 str3 = state.icon?.toString()
                 int1 = state.state
-                if (state is QSTile.SignalState) {
-                    bool1 = true
-                    bool2 = state.activityIn
-                    bool3 = state.activityOut
-                }
             },
-            {
-                "[$str1] Tile updated. Label=$str2. State=$int1. Icon=$str3." +
-                    if (bool1) " Activity in/out=$bool2/$bool3" else ""
-            }
+            { "[$str1] Tile updated. Label=$str2. State=$int1. Icon=$str3." }
         )
     }
 

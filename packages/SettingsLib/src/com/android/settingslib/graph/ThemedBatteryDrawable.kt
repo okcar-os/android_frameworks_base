@@ -142,7 +142,7 @@ open class ThemedBatteryDrawable(private val context: Context, frameColor: Int) 
     }
 
     private val errorPaint = Paint(Paint.ANTI_ALIAS_FLAG).also { p ->
-        p.color = Utils.getColorStateListDefaultColor(context, R.color.batterymeter_plus_color)
+        p.color = Utils.getColorStateListDefaultColor(context, R.color.batterymeter_saver_color)
         p.alpha = 255
         p.isDither = true
         p.strokeWidth = 0f
@@ -256,10 +256,11 @@ open class ThemedBatteryDrawable(private val context: Context, frameColor: Int) 
                 c.drawPath(scaledBolt, fillColorStrokeProtection)
             }
         } else if (powerSaveEnabled) {
-            // If power save is enabled draw the perimeter path with colorError
-            c.drawPath(scaledErrorPerimeter, errorPaint)
+            // If power save is enabled draw the level path with colorError
+            c.drawPath(levelPath, errorPaint)
             // And draw the plus sign on top of the fill
-            c.drawPath(scaledPlus, errorPaint)
+            fillPaint.color = fillColor
+            c.drawPath(scaledPlus, fillPaint)
         }
         c.restore()
 
@@ -355,7 +356,7 @@ open class ThemedBatteryDrawable(private val context: Context, frameColor: Int) 
         return batteryLevel
     }
 
-    override fun onBoundsChange(bounds: Rect?) {
+    override fun onBoundsChange(bounds: Rect) {
         super.onBoundsChange(bounds)
         updateSize()
     }
@@ -445,7 +446,7 @@ open class ThemedBatteryDrawable(private val context: Context, frameColor: Int) 
     companion object {
         const val WIDTH = 12f
         const val HEIGHT = 20f
-        private const val CRITICAL_LEVEL = 15
+        private const val CRITICAL_LEVEL = 20
         // On a 12x20 grid, how wide to make the fill protection stroke.
         // Scales when our size changes
         private const val PROTECTION_STROKE_WIDTH = 3f

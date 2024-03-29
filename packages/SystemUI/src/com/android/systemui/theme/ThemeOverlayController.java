@@ -13,19 +13,25 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 package com.android.systemui.theme;
 
+import static android.util.TypedValue.TYPE_INT_COLOR_ARGB8;
+
+import static com.android.systemui.Flags.themeOverlayControllerWakefulnessDeprecation;
 import static com.android.systemui.keyguard.WakefulnessLifecycle.WAKEFULNESS_ASLEEP;
 import static com.android.systemui.theme.ThemeOverlayApplier.COLOR_SOURCE_HOME;
 import static com.android.systemui.theme.ThemeOverlayApplier.COLOR_SOURCE_LOCK;
 import static com.android.systemui.theme.ThemeOverlayApplier.COLOR_SOURCE_PRESET;
 import static com.android.systemui.theme.ThemeOverlayApplier.OVERLAY_CATEGORY_ACCENT_COLOR;
+import static com.android.systemui.theme.ThemeOverlayApplier.OVERLAY_CATEGORY_DYNAMIC_COLOR;
 import static com.android.systemui.theme.ThemeOverlayApplier.OVERLAY_CATEGORY_SYSTEM_PALETTE;
 import static com.android.systemui.theme.ThemeOverlayApplier.OVERLAY_COLOR_BOTH;
 import static com.android.systemui.theme.ThemeOverlayApplier.OVERLAY_COLOR_INDEX;
 import static com.android.systemui.theme.ThemeOverlayApplier.OVERLAY_COLOR_SOURCE;
 import static com.android.systemui.theme.ThemeOverlayApplier.TIMESTAMP_FIELD;
 
+import android.app.UiModeManager;
 import android.app.WallpaperColors;
 import android.app.WallpaperManager;
 import android.app.WallpaperManager.OnColorsChangedListener;
@@ -51,7 +57,6 @@ import android.util.ArraySet;
 import android.util.Log;
 import android.util.SparseArray;
 import android.util.SparseIntArray;
-import android.util.TypedValue;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
@@ -67,6 +72,8 @@ import com.android.systemui.dump.DumpManager;
 import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.flags.Flags;
 import com.android.systemui.keyguard.WakefulnessLifecycle;
+import com.android.systemui.keyguard.domain.interactor.KeyguardTransitionInteractor;
+import com.android.systemui.keyguard.shared.model.KeyguardState;
 import com.android.systemui.monet.ColorScheme;
 import com.android.systemui.monet.Style;
 import com.android.systemui.monet.TonalPalette;
@@ -75,8 +82,20 @@ import com.android.systemui.statusbar.policy.ConfigurationController;
 import com.android.systemui.statusbar.policy.ConfigurationController.ConfigurationListener;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController.DeviceProvisionedListener;
+import com.android.systemui.util.kotlin.JavaAdapter;
 import com.android.systemui.util.settings.SecureSettings;
 import com.android.systemui.util.settings.SystemSettings;
+
+import com.google.ux.material.libmonet.dynamiccolor.MaterialDynamicColors;
+import com.google.ux.material.libmonet.hct.Hct;
+import com.google.ux.material.libmonet.scheme.DynamicScheme;
+import com.google.ux.material.libmonet.scheme.SchemeExpressive;
+import com.google.ux.material.libmonet.scheme.SchemeFruitSalad;
+import com.google.ux.material.libmonet.scheme.SchemeMonochrome;
+import com.google.ux.material.libmonet.scheme.SchemeNeutral;
+import com.google.ux.material.libmonet.scheme.SchemeRainbow;
+import com.google.ux.material.libmonet.scheme.SchemeTonalSpot;
+import com.google.ux.material.libmonet.scheme.SchemeVibrant;
 
 import lineageos.providers.LineageSettings;
 
@@ -112,9 +131,6 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
             "org.lineageos.overlay.customization.blacktheme";
     private static final boolean DEBUG = true;
 
-    protected static final int NEUTRAL = 0;
-    protected static final int ACCENT = 1;
-
     private final ThemeOverlayApplier mThemeManager;
     private final UserManager mUserManager;
     private final BroadcastDispatcher mBroadcastDispatcher;
@@ -123,9 +139,9 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
     private final SystemSettings mSystemSettings;
     private final Executor mMainExecutor;
     private final Handler mBgHandler;
-    private final boolean mIsMonochromaticEnabled;
     private final Context mContext;
     private final boolean mIsMonetEnabled;
+    private final boolean mIsFidelityEnabled;
     private final UserTracker mUserTracker;
     private final ConfigurationController mConfigurationController;
     private final DeviceProvisionedController mDeviceProvisionedController;
@@ -139,12 +155,17 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
     private boolean mNeedsOverlayCreation;
     // Dominant color extracted from wallpaper, NOT the color used on the overlay
     protected int mMainWallpaperColor = Color.TRANSPARENT;
+    // UI contrast as reported by UiModeManager
+    private float mContrast = 0;
     // Theme variant: Vibrant, Tonal, Expressive, etc
-    private Style mThemeStyle = Style.TONAL_SPOT;
+    @VisibleForTesting
+    protected Style mThemeStyle = Style.TONAL_SPOT;
     // Accent colors overlay
     private FabricatedOverlay mSecondaryOverlay;
     // Neutral system colors overlay
     private FabricatedOverlay mNeutralOverlay;
+    // Dynamic colors overlay
+    private FabricatedOverlay mDynamicOverlay;
     // If wallpaper color event will be accepted and change the UI colors.
     private boolean mAcceptColorEvents = true;
     // If non-null (per user), colors that were sent to the framework, and processing was deferred
@@ -152,6 +173,11 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
     private final SparseArray<WallpaperColors> mDeferredWallpaperColors = new SparseArray<>();
     private final SparseIntArray mDeferredWallpaperColorsFlags = new SparseIntArray();
     private final WakefulnessLifecycle mWakefulnessLifecycle;
+    private final JavaAdapter mJavaAdapter;
+    private final KeyguardTransitionInteractor mKeyguardTransitionInteractor;
+    private final UiModeManager mUiModeManager;
+    private DynamicScheme mDynamicSchemeDark;
+    private DynamicScheme mDynamicSchemeLight;
 
     // Defers changing themes until Setup Wizard is done.
     private boolean mDeferredThemeEvaluation;
@@ -197,8 +223,12 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
                 return;
             }
             boolean currentUser = userId == mUserTracker.getUserId();
-            if (currentUser && !mAcceptColorEvents
-                    && mWakefulnessLifecycle.getWakefulness() != WAKEFULNESS_ASLEEP) {
+            boolean isAsleep = themeOverlayControllerWakefulnessDeprecation()
+                    ? mKeyguardTransitionInteractor.isFinishedInStateWhereValue(
+                        state -> KeyguardState.Companion.deviceIsAsleepInState(state))
+                    : mWakefulnessLifecycle.getWakefulness() != WAKEFULNESS_ASLEEP;
+
+            if (currentUser && !mAcceptColorEvents && isAsleep) {
                 mDeferredWallpaperColors.put(userId, wallpaperColors);
                 mDeferredWallpaperColorsFlags.put(userId, which);
                 Log.i(TAG, "colors received; processing deferred until screen off: "
@@ -327,6 +357,7 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
                 mSkipSettingChange = true;
                 if (jsonObject.has(OVERLAY_CATEGORY_ACCENT_COLOR) || jsonObject.has(
                         OVERLAY_CATEGORY_SYSTEM_PALETTE)) {
+                    jsonObject.remove(OVERLAY_CATEGORY_DYNAMIC_COLOR);
                     jsonObject.remove(OVERLAY_CATEGORY_ACCENT_COLOR);
                     jsonObject.remove(OVERLAY_CATEGORY_SYSTEM_PALETTE);
                     jsonObject.remove(OVERLAY_COLOR_INDEX);
@@ -356,13 +387,21 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
     private final BroadcastReceiver mBroadcastReceiver = new BroadcastReceiver() {
         @Override
         public void onReceive(Context context, Intent intent) {
-            boolean newWorkProfile = Intent.ACTION_MANAGED_PROFILE_ADDED.equals(intent.getAction());
-            boolean isManagedProfile = mUserManager.isManagedProfile(
-                    intent.getIntExtra(Intent.EXTRA_USER_HANDLE, 0));
-            if (newWorkProfile) {
-                if (!mDeviceProvisionedController.isCurrentUserSetup() && isManagedProfile) {
+            boolean newProfile = Intent.ACTION_PROFILE_ADDED.equals(intent.getAction());
+            if (newProfile) {
+                UserHandle newUserHandle = intent.getParcelableExtra(Intent.EXTRA_USER,
+                        android.os.UserHandle.class);
+                boolean isManagedProfile =
+                        mUserManager.isManagedProfile(newUserHandle.getIdentifier());
+                if (!mDeviceProvisionedController.isUserSetup(newUserHandle.getIdentifier())
+                        && isManagedProfile) {
                     Log.i(TAG, "User setup not finished when " + intent.getAction()
                             + " was received. Deferring... Managed profile? " + isManagedProfile);
+                    return;
+                }
+                if (android.os.Flags.allowPrivateProfile() && isPrivateProfile(newUserHandle)) {
+                    mDeferredThemeEvaluation = true;
+                    Log.i(TAG, "Deferring theme for private profile till user setup is complete");
                     return;
                 }
                 if (DEBUG) Log.d(TAG, "Updating overlays for user switch / profile added.");
@@ -397,11 +436,13 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
             DumpManager dumpManager,
             FeatureFlags featureFlags,
             @Main Resources resources,
-            WakefulnessLifecycle wakefulnessLifecycle) {
+            WakefulnessLifecycle wakefulnessLifecycle,
+            JavaAdapter javaAdapter,
+            KeyguardTransitionInteractor keyguardTransitionInteractor,
+            UiModeManager uiModeManager) {
         mContext = context;
-        mIsMonochromaticEnabled = featureFlags.isEnabled(Flags.MONOCHROMATIC_THEME);
         mIsMonetEnabled = featureFlags.isEnabled(Flags.MONET);
-        mConfigurationController = configurationController;
+        mIsFidelityEnabled = featureFlags.isEnabled(Flags.COLOR_FIDELITY);
         mDeviceProvisionedController = deviceProvisionedController;
         mBroadcastDispatcher = broadcastDispatcher;
         mUserManager = userManager;
@@ -415,6 +456,9 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
         mUserTracker = userTracker;
         mResources = resources;
         mWakefulnessLifecycle = wakefulnessLifecycle;
+        mJavaAdapter = javaAdapter;
+        mKeyguardTransitionInteractor = keyguardTransitionInteractor;
+        mUiModeManager = uiModeManager;
         dumpManager.registerDumpable(TAG, this);
     }
 
@@ -422,7 +466,7 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
     public void start() {
         if (DEBUG) Log.d(TAG, "Start");
         final IntentFilter filter = new IntentFilter();
-        filter.addAction(Intent.ACTION_MANAGED_PROFILE_ADDED);
+        filter.addAction(Intent.ACTION_PROFILE_ADDED);
         filter.addAction(Intent.ACTION_WALLPAPER_CHANGED);
         mBroadcastDispatcher.registerReceiver(mBroadcastReceiver, filter, mMainExecutor,
                 UserHandle.ALL);
@@ -448,6 +492,60 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
                             return;
                         }
                         reevaluateSystemTheme(true /* forceReload */);
+                    }
+                },
+                UserHandle.USER_ALL);
+        mContrast = mUiModeManager.getContrast();
+        mUiModeManager.addContrastChangeListener(mMainExecutor, contrast -> {
+            mContrast = contrast;
+            // Force reload so that we update even when the main color has not changed
+            reevaluateSystemTheme(true /* forceReload */);
+        });
+
+        mSecureSettings.registerContentObserverForUser(
+                LineageSettings.Secure.getUriFor(LineageSettings.Secure.BERRY_BLACK_THEME),
+                false,
+                new ContentObserver(mBgHandler) {
+                    @Override
+                    public void onChange(boolean selfChange, Collection<Uri> collection, int flags,
+                            int userId) {
+                        if (DEBUG) Log.d(TAG, "Overlay changed for user: " + userId);
+                        if (mUserTracker.getUserId() != userId) {
+                            return;
+                        }
+                        if (!mDeviceProvisionedController.isUserSetup(userId)) {
+                            Log.i(TAG, "Theme application deferred when setting changed.");
+                            mDeferredThemeEvaluation = true;
+                            return;
+                        }
+                        reevaluateSystemTheme(true /* forceReload */);
+                    }
+                },
+                UserHandle.USER_ALL);
+
+        mSystemSettings.registerContentObserverForUser(
+                LineageSettings.System.getUriFor(LineageSettings.System.STATUS_BAR_BATTERY_STYLE),
+                false,
+                new ContentObserver(mBgHandler) {
+                    @Override
+                    public void onChange(boolean selfChange, Collection<Uri> collection, int flags,
+                            int userId) {
+                        if (DEBUG) Log.d(TAG, "Overlay changed for user: " + userId);
+                        if (mUserTracker.getUserId() != userId) {
+                            return;
+                        }
+                        if (!mDeviceProvisionedController.isUserSetup(userId)) {
+                            Log.i(TAG, "Theme application deferred when setting changed.");
+                            mDeferredThemeEvaluation = true;
+                            return;
+                        }
+                        boolean isCircleBattery = LineageSettings.System.getIntForUser(
+                                mContext.getContentResolver(),
+                                LineageSettings.System.STATUS_BAR_BATTERY_STYLE,
+                                0, UserHandle.USER_CURRENT) == 1;
+                        if (isCircleBattery) {
+                            reevaluateSystemTheme(true /* forceReload */);
+                        }
                     }
                 },
                 UserHandle.USER_ALL);
@@ -539,21 +637,34 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
         }
         mWallpaperManager.addOnColorsChangedListener(mOnColorsChangedListener, null,
                 UserHandle.USER_ALL);
-        mWakefulnessLifecycle.addObserver(new WakefulnessLifecycle.Observer() {
-            @Override
-            public void onFinishedGoingToSleep() {
-                final int userId = mUserTracker.getUserId();
-                final WallpaperColors colors = mDeferredWallpaperColors.get(userId);
-                if (colors != null) {
-                    int flags = mDeferredWallpaperColorsFlags.get(userId);
 
-                    mDeferredWallpaperColors.put(userId, null);
-                    mDeferredWallpaperColorsFlags.put(userId, 0);
+        Runnable whenAsleepHandler = () -> {
+            final int userId = mUserTracker.getUserId();
+            final WallpaperColors colors = mDeferredWallpaperColors.get(userId);
+            if (colors != null) {
+                int flags = mDeferredWallpaperColorsFlags.get(userId);
 
-                    handleWallpaperColors(colors, flags, userId);
-                }
+                mDeferredWallpaperColors.put(userId, null);
+                mDeferredWallpaperColorsFlags.put(userId, 0);
+
+                handleWallpaperColors(colors, flags, userId);
             }
-        });
+        };
+
+        if (themeOverlayControllerWakefulnessDeprecation()) {
+            mJavaAdapter.alwaysCollectFlow(
+                    mKeyguardTransitionInteractor.isFinishedInState(KeyguardState.DOZING),
+                    isFinishedInDozing -> {
+                        if (isFinishedInDozing) whenAsleepHandler.run();
+                    });
+        } else {
+            mWakefulnessLifecycle.addObserver(new WakefulnessLifecycle.Observer() {
+                @Override
+                public void onFinishedGoingToSleep() {
+                    whenAsleepHandler.run();
+                }
+            });
+        }
     }
 
     private void reevaluateSystemTheme(boolean forceReload) {
@@ -572,12 +683,11 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
 
         if (mIsMonetEnabled) {
             mThemeStyle = fetchThemeStyleFromSetting();
-            mSecondaryOverlay = getOverlay(mMainWallpaperColor, ACCENT, mThemeStyle);
-            mNeutralOverlay = getOverlay(mMainWallpaperColor, NEUTRAL, mThemeStyle);
+            createOverlays(mMainWallpaperColor);
             mNeedsOverlayCreation = true;
             if (DEBUG) {
                 Log.d(TAG, "fetched overlays. accent: " + mSecondaryOverlay
-                        + " neutral: " + mNeutralOverlay);
+                        + " neutral: " + mNeutralOverlay + " dynamic: " + mDynamicOverlay);
             }
         }
 
@@ -595,39 +705,114 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
         return ColorScheme.getSeedColor(wallpaperColors);
     }
 
-    /**
-     * Given a color candidate, return an overlay definition.
-     */
-    protected FabricatedOverlay getOverlay(int color, int type, Style style) {
-        mColorScheme = new ColorScheme(color, isNightMode(), style);
-        String name = type == ACCENT ? "accent" : "neutral";
-
-        FabricatedOverlay.Builder overlay =
-                new FabricatedOverlay.Builder("com.android.systemui", name, "android");
-
-        if (type == ACCENT) {
-            assignTonalPaletteToOverlay("accent1", overlay, mColorScheme.getAccent1());
-            assignTonalPaletteToOverlay("accent2", overlay, mColorScheme.getAccent2());
-            assignTonalPaletteToOverlay("accent3", overlay, mColorScheme.getAccent3());
-        } else {
-            assignTonalPaletteToOverlay("neutral1", overlay, mColorScheme.getNeutral1());
-            assignTonalPaletteToOverlay("neutral2", overlay, mColorScheme.getNeutral2());
+    private static DynamicScheme dynamicSchemeFromStyle(Style style, int color,
+            boolean isDark, double contrastLevel) {
+        Hct sourceColorHct = Hct.fromInt(color);
+        switch (style) {
+            case EXPRESSIVE:
+                return new SchemeExpressive(sourceColorHct, isDark, contrastLevel);
+            case SPRITZ:
+                return new SchemeNeutral(sourceColorHct, isDark, contrastLevel);
+            case TONAL_SPOT:
+                return new SchemeTonalSpot(sourceColorHct, isDark, contrastLevel);
+            case FRUIT_SALAD:
+                return new SchemeFruitSalad(sourceColorHct, isDark, contrastLevel);
+            case RAINBOW:
+                return new SchemeRainbow(sourceColorHct, isDark, contrastLevel);
+            case VIBRANT:
+                return new SchemeVibrant(sourceColorHct, isDark, contrastLevel);
+            case MONOCHROMATIC:
+                return new SchemeMonochrome(sourceColorHct, isDark, contrastLevel);
+            default:
+                return null;
         }
-
-        return overlay.build();
     }
 
-    private void assignTonalPaletteToOverlay(String name,
-            FabricatedOverlay.Builder overlay, TonalPalette tonalPalette) {
+    @VisibleForTesting
+    protected boolean isNightMode() {
+        return (mResources.getConfiguration().uiMode
+                & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+    }
 
+    @VisibleForTesting
+    protected FabricatedOverlay newFabricatedOverlay(String name) {
+        return new FabricatedOverlay.Builder("com.android.systemui", name, "android").build();
+    }
+
+    @VisibleForTesting
+    protected boolean isPrivateProfile(UserHandle userHandle) {
+        Context usercontext = mContext.createContextAsUser(userHandle,0);
+        if (usercontext.getSystemService(UserManager.class).isPrivateProfile()) {
+            return true;
+        }
+        return false;
+    }
+
+    private void createOverlays(int color) {
+        boolean nightMode = isNightMode();
+        mColorScheme = new ColorScheme(color, nightMode, mThemeStyle);
+        mNeutralOverlay = createNeutralOverlay();
+        mSecondaryOverlay = createAccentOverlay();
+
+        mDynamicSchemeDark = dynamicSchemeFromStyle(
+                mThemeStyle, color, true /* isDark */, mContrast);
+        mDynamicSchemeLight = dynamicSchemeFromStyle(
+                mThemeStyle, color, false /* isDark */, mContrast);
+        mDynamicOverlay = createDynamicOverlay();
+    }
+
+    protected FabricatedOverlay createNeutralOverlay() {
+        FabricatedOverlay overlay = newFabricatedOverlay("neutral");
+        assignTonalPaletteToOverlay("neutral1", overlay, mColorScheme.getNeutral1());
+        assignTonalPaletteToOverlay("neutral2", overlay, mColorScheme.getNeutral2());
+        return overlay;
+    }
+
+    protected FabricatedOverlay createAccentOverlay() {
+        FabricatedOverlay overlay = newFabricatedOverlay("accent");
+        assignTonalPaletteToOverlay("accent1", overlay, mColorScheme.getAccent1());
+        assignTonalPaletteToOverlay("accent2", overlay, mColorScheme.getAccent2());
+        assignTonalPaletteToOverlay("accent3", overlay, mColorScheme.getAccent3());
+        return overlay;
+    }
+
+    private void assignTonalPaletteToOverlay(String name, FabricatedOverlay overlay,
+            TonalPalette tonalPalette) {
         String resourcePrefix = "android:color/system_" + name;
-        int colorDataType = TypedValue.TYPE_INT_COLOR_ARGB8;
 
         tonalPalette.getAllShadesMapped().forEach((key, value) -> {
             String resourceName = resourcePrefix + "_" + key;
             int colorValue = ColorUtils.setAlphaComponent(value, 0xFF);
-            overlay.setResourceValue(resourceName, colorDataType,
-                    colorValue);
+            overlay.setResourceValue(resourceName, TYPE_INT_COLOR_ARGB8, colorValue,
+                    null /* configuration */);
+        });
+    }
+
+    protected FabricatedOverlay createDynamicOverlay() {
+        FabricatedOverlay overlay = newFabricatedOverlay("dynamic");
+        assignDynamicPaletteToOverlay(overlay, true /* isDark */);
+        assignDynamicPaletteToOverlay(overlay, false /* isDark */);
+        assignFixedColorsToOverlay(overlay);
+        return overlay;
+    }
+
+    private void assignDynamicPaletteToOverlay(FabricatedOverlay overlay, boolean isDark) {
+        String suffix = isDark ? "dark" : "light";
+        DynamicScheme scheme = isDark ? mDynamicSchemeDark : mDynamicSchemeLight;
+        DynamicColors.allDynamicColorsMapped(mIsFidelityEnabled).forEach(p -> {
+            String resourceName = "android:color/system_" + p.first + "_" + suffix;
+            int colorValue = p.second.getArgb(scheme);
+            overlay.setResourceValue(resourceName, TYPE_INT_COLOR_ARGB8, colorValue,
+                    null /* configuration */);
+        });
+    }
+
+    private void assignFixedColorsToOverlay(FabricatedOverlay overlay) {
+        DynamicColors.getFixedColorsMapped(mIsFidelityEnabled).forEach(p -> {
+            String resourceName = "android:color/system_" + p.first;
+            int colorValue = p.second.getArgb(mDynamicSchemeLight);
+            overlay.setResourceValue(resourceName, TYPE_INT_COLOR_ARGB8, colorValue,
+                    null /* configuration */);
         });
     }
 
@@ -641,16 +826,28 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
         for (UserHandle userHandle : allProfiles) {
             Resources res = userHandle.isSystem()
                     ? mResources : mContext.createContextAsUser(userHandle, 0).getResources();
-            if (!(res.getColor(android.R.color.system_accent1_500, mContext.getTheme())
+            Resources.Theme theme = mContext.getTheme();
+            MaterialDynamicColors dynamicColors = new MaterialDynamicColors(mIsFidelityEnabled);
+            if (!(res.getColor(android.R.color.system_accent1_500, theme)
                     == mColorScheme.getAccent1().getS500()
-                    && res.getColor(android.R.color.system_accent2_500, mContext.getTheme())
+                    && res.getColor(android.R.color.system_accent2_500, theme)
                     == mColorScheme.getAccent2().getS500()
-                    && res.getColor(android.R.color.system_accent3_500, mContext.getTheme())
+                    && res.getColor(android.R.color.system_accent3_500, theme)
                     == mColorScheme.getAccent3().getS500()
-                    && res.getColor(android.R.color.system_neutral1_500, mContext.getTheme())
+                    && res.getColor(android.R.color.system_neutral1_500, theme)
                     == mColorScheme.getNeutral1().getS500()
-                    && res.getColor(android.R.color.system_neutral2_500, mContext.getTheme())
-                    == mColorScheme.getNeutral2().getS500())) {
+                    && res.getColor(android.R.color.system_neutral2_500, theme)
+                    == mColorScheme.getNeutral2().getS500()
+                    && res.getColor(android.R.color.system_outline_variant_dark, theme)
+                    == dynamicColors.outlineVariant().getArgb(mDynamicSchemeDark)
+                    && res.getColor(android.R.color.system_outline_variant_light, theme)
+                    == dynamicColors.outlineVariant().getArgb(mDynamicSchemeLight)
+                    && res.getColor(android.R.color.system_primary_container_dark, theme)
+                    == dynamicColors.primaryContainer().getArgb(mDynamicSchemeDark)
+                    && res.getColor(android.R.color.system_primary_container_light, theme)
+                    == dynamicColors.primaryContainer().getArgb(mDynamicSchemeLight)
+                    && res.getColor(android.R.color.system_primary_fixed, theme)
+                    == dynamicColors.primaryFixed().getArgb(mDynamicSchemeLight))) {
                 return false;
             }
         }
@@ -687,12 +884,11 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
                 if (!colorString.startsWith("#")) {
                     colorString = "#" + colorString;
                 }
-                int color = Color.parseColor(colorString);
-                mNeutralOverlay = getOverlay(color, NEUTRAL, mThemeStyle);
-                mSecondaryOverlay = getOverlay(color, ACCENT, mThemeStyle);
+                createOverlays(Color.parseColor(colorString));
                 mNeedsOverlayCreation = true;
                 categoryToPackage.remove(OVERLAY_CATEGORY_SYSTEM_PALETTE);
                 categoryToPackage.remove(OVERLAY_CATEGORY_ACCENT_COLOR);
+                categoryToPackage.remove(OVERLAY_CATEGORY_DYNAMIC_COLOR);
             } catch (Exception e) {
                 // Color.parseColor doesn't catch any exceptions from the calls it makes
                 Log.w(TAG, "Invalid color definition: " + systemPalette.getPackageName(), e);
@@ -704,6 +900,7 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
                 // fail.
                 categoryToPackage.remove(OVERLAY_CATEGORY_SYSTEM_PALETTE);
                 categoryToPackage.remove(OVERLAY_CATEGORY_ACCENT_COLOR);
+                categoryToPackage.remove(OVERLAY_CATEGORY_DYNAMIC_COLOR);
             } catch (NumberFormatException e) {
                 // This is a package name. All good, let's continue
             }
@@ -720,6 +917,18 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
                 && mSecondaryOverlay != null) {
             categoryToPackage.put(OVERLAY_CATEGORY_ACCENT_COLOR, mSecondaryOverlay.getIdentifier());
         }
+        if (!categoryToPackage.containsKey(OVERLAY_CATEGORY_DYNAMIC_COLOR)
+                && mDynamicOverlay != null) {
+            categoryToPackage.put(OVERLAY_CATEGORY_DYNAMIC_COLOR, mDynamicOverlay.getIdentifier());
+        }
+
+        boolean isBlackMode = (LineageSettings.Secure.getIntForUser(
+                mContext.getContentResolver(), LineageSettings.Secure.BERRY_BLACK_THEME,
+                0, currentUser) == 1) && isNightMode();
+        if (categoryToPackage.containsKey(OVERLAY_CATEGORY_SYSTEM_PALETTE) && isBlackMode) {
+            OverlayIdentifier blackTheme = new OverlayIdentifier(OVERLAY_BERRY_BLACK_THEME);
+            categoryToPackage.put(OVERLAY_CATEGORY_SYSTEM_PALETTE, blackTheme);
+        }
 
         boolean isBlackMode = (LineageSettings.Secure.getIntForUser(
                 mContext.getContentResolver(), LineageSettings.Secure.BERRY_BLACK_THEME,
@@ -731,7 +940,7 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
 
         Set<UserHandle> managedProfiles = new HashSet<>();
         for (UserInfo userInfo : mUserManager.getEnabledProfiles(currentUser)) {
-            if (userInfo.isManagedProfile()) {
+            if (userInfo.isProfile()) {
                 managedProfiles.add(userInfo.getUserHandle());
             }
         }
@@ -744,7 +953,7 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
         if (mNeedsOverlayCreation) {
             mNeedsOverlayCreation = false;
             mThemeManager.applyCurrentUserOverlays(categoryToPackage, new FabricatedOverlay[]{
-                    mSecondaryOverlay, mNeutralOverlay
+                    mSecondaryOverlay, mNeutralOverlay, mDynamicOverlay
             }, currentUser, managedProfiles);
         } else {
             mThemeManager.applyCurrentUserOverlays(categoryToPackage, null, currentUser,
@@ -757,11 +966,8 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
         // used as a system-wide theme.
         // - Content intentionally excluded, intended for media player, not system-wide
         List<Style> validStyles = new ArrayList<>(Arrays.asList(Style.EXPRESSIVE, Style.SPRITZ,
-                Style.TONAL_SPOT, Style.FRUIT_SALAD, Style.RAINBOW, Style.VIBRANT));
-
-        if (mIsMonochromaticEnabled) {
-            validStyles.add(Style.MONOCHROMATIC);
-        }
+                Style.TONAL_SPOT, Style.FRUIT_SALAD, Style.RAINBOW, Style.VIBRANT,
+                Style.MONOCHROMATIC));
 
         Style style = mThemeStyle;
         final String overlayPackageJson = mSecureSettings.getStringForUser(
@@ -789,7 +995,9 @@ public class ThemeOverlayController implements CoreStartable, Dumpable {
         pw.println("mMainWallpaperColor=" + Integer.toHexString(mMainWallpaperColor));
         pw.println("mSecondaryOverlay=" + mSecondaryOverlay);
         pw.println("mNeutralOverlay=" + mNeutralOverlay);
+        pw.println("mDynamicOverlay=" + mDynamicOverlay);
         pw.println("mIsMonetEnabled=" + mIsMonetEnabled);
+        pw.println("mIsFidelityEnabled=" + mIsFidelityEnabled);
         pw.println("mColorScheme=" + mColorScheme);
         pw.println("mNeedsOverlayCreation=" + mNeedsOverlayCreation);
         pw.println("mAcceptColorEvents=" + mAcceptColorEvents);

@@ -35,7 +35,6 @@ import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.hardware.display.AmbientBrightnessDayStats;
 import android.hardware.display.BrightnessChangeEvent;
-import android.hardware.display.BrightnessConfiguration;
 import android.hardware.display.ColorDisplayManager;
 import android.hardware.display.DisplayManager;
 import android.hardware.display.DisplayManagerInternal;
@@ -55,8 +54,6 @@ import android.os.UserManager;
 import android.provider.Settings;
 import android.util.AtomicFile;
 import android.util.Slog;
-import android.util.TypedXmlPullParser;
-import android.util.TypedXmlSerializer;
 import android.util.Xml;
 import android.view.Display;
 
@@ -64,7 +61,10 @@ import com.android.internal.annotations.GuardedBy;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.os.BackgroundThread;
 import com.android.internal.util.RingBuffer;
+import com.android.modules.utils.TypedXmlPullParser;
+import com.android.modules.utils.TypedXmlSerializer;
 import com.android.server.LocalServices;
+import com.android.server.display.utils.DebugUtils;
 
 import libcore.io.IoUtils;
 
@@ -92,8 +92,10 @@ import java.util.concurrent.TimeUnit;
 public class BrightnessTracker {
 
     static final String TAG = "BrightnessTracker";
-    static final boolean DEBUG = false;
 
+    // To enable these logs, run:
+    // 'adb shell setprop persist.log.tag.BrightnessTracker DEBUG && adb reboot'
+    static final boolean DEBUG = DebugUtils.isDebuggable(TAG);
     private static final String EVENTS_FILE = "brightness_events.xml";
     private static final String AMBIENT_BRIGHTNESS_STATS_FILE = "ambient_brightness_stats.xml";
     private static final int MAX_EVENTS = 100;
@@ -126,7 +128,7 @@ public class BrightnessTracker {
     private static final int MSG_BRIGHTNESS_CHANGED = 1;
     private static final int MSG_STOP_SENSOR_LISTENER = 2;
     private static final int MSG_START_SENSOR_LISTENER = 3;
-    private static final int MSG_BRIGHTNESS_CONFIG_CHANGED = 4;
+    private static final int MSG_SHOULD_COLLECT_COLOR_SAMPLE_CHANGED = 4;
     private static final int MSG_SENSOR_CHANGED = 5;
 
     private static final SimpleDateFormat FORMAT = new SimpleDateFormat("MM-dd HH:mm:ss.SSS");
@@ -162,7 +164,7 @@ public class BrightnessTracker {
     private boolean mColorSamplingEnabled;
     private int mNoFramesToSample;
     private float mFrameRate;
-    private BrightnessConfiguration mBrightnessConfiguration;
+    private boolean mShouldCollectColorSample = false;
     // End of block of members that should only be accessed on the mBgHandler thread.
 
     private @UserIdInt int mCurrentUserId = UserHandle.USER_NULL;
@@ -208,9 +210,9 @@ public class BrightnessTracker {
     /**
      * Update tracker with new brightness configuration.
      */
-    public void setBrightnessConfiguration(BrightnessConfiguration brightnessConfiguration) {
-        mBgHandler.obtainMessage(MSG_BRIGHTNESS_CONFIG_CHANGED,
-                brightnessConfiguration).sendToTarget();
+    public void setShouldCollectColorSample(boolean shouldCollectColorSample) {
+        mBgHandler.obtainMessage(MSG_SHOULD_COLLECT_COLOR_SAMPLE_CHANGED,
+                shouldCollectColorSample).sendToTarget();
     }
 
     private void backgroundStart(float initialBrightness) {
@@ -317,10 +319,12 @@ public class BrightnessTracker {
     }
 
     /**
-     * Notify the BrightnessTracker that the user has changed the brightness of the display.
+     * Notify the BrightnessTracker that the brightness of the display has changed.
+     * We pass both the user change and system changes, so that we know the starting point
+     * of the next user interaction. Only user interactions are then sent as BrightnessChangeEvents.
      */
     public void notifyBrightnessChanged(float brightness, boolean userInitiated,
-            float powerBrightnessFactor, boolean isUserSetBrightness,
+            float powerBrightnessFactor, boolean wasShortTermModelActive,
             boolean isDefaultBrightnessConfig, String uniqueDisplayId, float[] luxValues,
             long[] luxTimestamps) {
         if (DEBUG) {
@@ -329,7 +333,7 @@ public class BrightnessTracker {
         }
         Message m = mBgHandler.obtainMessage(MSG_BRIGHTNESS_CHANGED,
                 userInitiated ? 1 : 0, 0 /*unused*/, new BrightnessChangeValues(brightness,
-                        powerBrightnessFactor, isUserSetBrightness, isDefaultBrightnessConfig,
+                        powerBrightnessFactor, wasShortTermModelActive, isDefaultBrightnessConfig,
                         mInjector.currentTimeMillis(), uniqueDisplayId, luxValues, luxTimestamps));
         m.sendToTarget();
     }
@@ -343,7 +347,7 @@ public class BrightnessTracker {
     }
 
     private void handleBrightnessChanged(float brightness, boolean userInitiated,
-            float powerBrightnessFactor, boolean isUserSetBrightness,
+            float powerBrightnessFactor, boolean wasShortTermModelActive,
             boolean isDefaultBrightnessConfig, long timestamp, String uniqueDisplayId,
             float[] luxValues, long[] luxTimestamps) {
         BrightnessChangeEvent.Builder builder;
@@ -353,10 +357,8 @@ public class BrightnessTracker {
                 // Not currently gathering brightness change information
                 return;
             }
-
             float previousBrightness = mLastBrightness;
             mLastBrightness = brightness;
-
             if (!userInitiated) {
                 // We want to record what current brightness is so that we know what the user
                 // changed it from, but if it wasn't user initiated then we don't want to record it
@@ -368,7 +370,7 @@ public class BrightnessTracker {
             builder.setBrightness(brightness);
             builder.setTimeStamp(timestamp);
             builder.setPowerBrightnessFactor(powerBrightnessFactor);
-            builder.setUserBrightnessPoint(isUserSetBrightness);
+            builder.setUserBrightnessPoint(wasShortTermModelActive);
             builder.setIsDefaultBrightnessConfig(isDefaultBrightnessConfig);
             builder.setUniqueDisplayId(uniqueDisplayId);
 
@@ -430,7 +432,7 @@ public class BrightnessTracker {
 
         BrightnessChangeEvent event = builder.build();
         if (DEBUG) {
-            Slog.d(TAG, "Event " + event.brightness + " " + event.packageName);
+            Slog.d(TAG, "Event: " + event.toString());
         }
         synchronized (mEventsLock) {
             mEventsDirty = true;
@@ -527,12 +529,36 @@ public class BrightnessTracker {
         }
     }
 
+    // Return the path to the given file, either the new path
+    // /data/system/$filename, or the old path /data/system_de/$filename if the
+    // file exists there but not at the new path.  Only use this for EVENTS_FILE
+    // and AMBIENT_BRIGHTNESS_STATS_FILE.
+    //
+    // Explanation: this service previously incorrectly stored these two files
+    // directly in /data/system_de, instead of in /data/system where they should
+    // have been.  As system_server no longer has write access to
+    // /data/system_de itself, these files were moved to /data/system.  To
+    // lazily migrate the files, we simply read from the old path if it exists
+    // and the new one doesn't, and always write to the new path.  Note that
+    // system_server doesn't have permission to delete the old files.
+    private AtomicFile getFileWithLegacyFallback(String filename) {
+        AtomicFile file = mInjector.getFile(filename);
+        if (file != null && !file.exists()) {
+            AtomicFile legacyFile = mInjector.getLegacyFile(filename);
+            if (legacyFile != null && legacyFile.exists()) {
+                Slog.i(TAG, "Reading " + filename + " from old location");
+                return legacyFile;
+            }
+        }
+        return file;
+    }
+
     private void readEvents() {
         synchronized (mEventsLock) {
             // Read might prune events so mark as dirty.
             mEventsDirty = true;
             mEvents.clear();
-            final AtomicFile readFrom = mInjector.getFile(EVENTS_FILE);
+            final AtomicFile readFrom = getFileWithLegacyFallback(EVENTS_FILE);
             if (readFrom != null && readFrom.exists()) {
                 FileInputStream input = null;
                 try {
@@ -550,7 +576,7 @@ public class BrightnessTracker {
 
     private void readAmbientBrightnessStats() {
         mAmbientBrightnessStatsTracker = new AmbientBrightnessStatsTracker(mUserManager, null);
-        final AtomicFile readFrom = mInjector.getFile(AMBIENT_BRIGHTNESS_STATS_FILE);
+        final AtomicFile readFrom = getFileWithLegacyFallback(AMBIENT_BRIGHTNESS_STATS_FILE);
         if (readFrom != null && readFrom.exists()) {
             FileInputStream input = null;
             try {
@@ -773,6 +799,7 @@ public class BrightnessTracker {
                 pw.print(", isUserSetBrightness=" + events[i].isUserSetBrightness);
                 pw.print(", powerBrightnessFactor=" + events[i].powerBrightnessFactor);
                 pw.print(", isDefaultBrightnessConfig=" + events[i].isDefaultBrightnessConfig);
+                pw.print(", recent lux values=");
                 pw.print(" {");
                 for (int j = 0; j < events[i].luxValues.length; ++j){
                     if (j != 0) {
@@ -803,8 +830,7 @@ public class BrightnessTracker {
         if (!mInjector.isBrightnessModeAutomatic(mContentResolver)
                 || !mInjector.isInteractive(mContext)
                 || mColorSamplingEnabled
-                || mBrightnessConfiguration == null
-                || !mBrightnessConfiguration.shouldCollectColorSamples()) {
+                || !mShouldCollectColorSample) {
             return;
         }
 
@@ -973,7 +999,7 @@ public class BrightnessTracker {
                     BrightnessChangeValues values = (BrightnessChangeValues) msg.obj;
                     boolean userInitiatedChange = (msg.arg1 == 1);
                     handleBrightnessChanged(values.brightness, userInitiatedChange,
-                            values.powerBrightnessFactor, values.isUserSetBrightness,
+                            values.powerBrightnessFactor, values.wasShortTermModelActive,
                             values.isDefaultBrightnessConfig, values.timestamp,
                             values.uniqueDisplayId, values.luxValues, values.luxTimestamps);
                     break;
@@ -985,14 +1011,11 @@ public class BrightnessTracker {
                     stopSensorListener();
                     disableColorSampling();
                     break;
-                case MSG_BRIGHTNESS_CONFIG_CHANGED:
-                    mBrightnessConfiguration = (BrightnessConfiguration) msg.obj;
-                    boolean shouldCollectColorSamples =
-                            mBrightnessConfiguration != null
-                                    && mBrightnessConfiguration.shouldCollectColorSamples();
-                    if (shouldCollectColorSamples && !mColorSamplingEnabled) {
+                case MSG_SHOULD_COLLECT_COLOR_SAMPLE_CHANGED:
+                    mShouldCollectColorSample = (boolean) msg.obj;
+                    if (mShouldCollectColorSample && !mColorSamplingEnabled) {
                         enableColorSampling();
-                    } else if (!shouldCollectColorSamples && mColorSamplingEnabled) {
+                    } else if (!mShouldCollectColorSample && mColorSamplingEnabled) {
                         disableColorSampling();
                     }
                     break;
@@ -1007,7 +1030,7 @@ public class BrightnessTracker {
     private static class BrightnessChangeValues {
         public final float brightness;
         public final float powerBrightnessFactor;
-        public final boolean isUserSetBrightness;
+        public final boolean wasShortTermModelActive;
         public final boolean isDefaultBrightnessConfig;
         public final long timestamp;
         public final String uniqueDisplayId;
@@ -1015,11 +1038,11 @@ public class BrightnessTracker {
         public final long[] luxTimestamps;
 
         BrightnessChangeValues(float brightness, float powerBrightnessFactor,
-                boolean isUserSetBrightness, boolean isDefaultBrightnessConfig,
+                boolean wasShortTermModelActive, boolean isDefaultBrightnessConfig,
                 long timestamp, String uniqueDisplayId, float[] luxValues, long[] luxTimestamps) {
             this.brightness = brightness;
             this.powerBrightnessFactor = powerBrightnessFactor;
-            this.isUserSetBrightness = isUserSetBrightness;
+            this.wasShortTermModelActive = wasShortTermModelActive;
             this.isDefaultBrightnessConfig = isDefaultBrightnessConfig;
             this.timestamp = timestamp;
             this.uniqueDisplayId = uniqueDisplayId;
@@ -1056,7 +1079,7 @@ public class BrightnessTracker {
 
         public void registerReceiver(Context context,
                 BroadcastReceiver receiver, IntentFilter filter) {
-            context.registerReceiver(receiver, filter);
+            context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED_UNAUDITED);
         }
 
         public void unregisterReceiver(Context context,
@@ -1080,6 +1103,10 @@ public class BrightnessTracker {
         }
 
         public AtomicFile getFile(String filename) {
+            return new AtomicFile(new File(Environment.getDataSystemDirectory(), filename));
+        }
+
+        public AtomicFile getLegacyFile(String filename) {
             return new AtomicFile(new File(Environment.getDataSystemDeDirectory(), filename));
         }
 

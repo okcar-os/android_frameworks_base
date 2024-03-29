@@ -30,6 +30,8 @@ import com.android.systemui.dagger.qualifiers.Main
 import com.android.systemui.keyguard.WakefulnessLifecycle
 import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
 import com.android.systemui.lifecycle.repeatWhenAttached
+import com.android.systemui.shade.ShadeFoldAnimator
+import com.android.systemui.shade.ShadeViewController
 import com.android.systemui.statusbar.LightRevealScrim
 import com.android.systemui.statusbar.phone.CentralSurfaces
 import com.android.systemui.statusbar.phone.ScreenOffAnimation
@@ -38,11 +40,11 @@ import com.android.systemui.unfold.FoldAodAnimationController.FoldAodAnimationSt
 import com.android.systemui.util.concurrency.DelayableExecutor
 import com.android.systemui.util.settings.GlobalSettings
 import dagger.Lazy
-import java.util.function.Consumer
-import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import java.util.function.Consumer
+import javax.inject.Inject
 
 /**
  * Controls folding to AOD animation: when AOD is enabled and foldable device is folded we play a
@@ -61,7 +63,7 @@ constructor(
     private val keyguardInteractor: Lazy<KeyguardInteractor>,
 ) : CallbackController<FoldAodAnimationStatus>, ScreenOffAnimation, WakefulnessLifecycle.Observer {
 
-    private lateinit var centralSurfaces: CentralSurfaces
+    private lateinit var shadeViewController: ShadeViewController
 
     private var isFolded = false
     private var isFoldHandled = true
@@ -79,21 +81,25 @@ constructor(
     private val foldToAodLatencyTracker = FoldToAodLatencyTracker()
 
     private val startAnimationRunnable = Runnable {
-        centralSurfaces.notificationPanelViewController.startFoldToAodAnimation(
+        getShadeFoldAnimator().startFoldToAodAnimation(
             /* startAction= */ { foldToAodLatencyTracker.onAnimationStarted() },
             /* endAction= */ { setAnimationState(playing = false) },
             /* cancelAction= */ { setAnimationState(playing = false) },
         )
     }
 
-    override fun initialize(centralSurfaces: CentralSurfaces, lightRevealScrim: LightRevealScrim) {
-        this.centralSurfaces = centralSurfaces
+    override fun initialize(
+            centralSurfaces: CentralSurfaces,
+            shadeViewController: ShadeViewController,
+            lightRevealScrim: LightRevealScrim,
+    ) {
+        this.shadeViewController = shadeViewController
 
         deviceStateManager.registerCallback(mainExecutor, FoldListener())
         wakefulnessLifecycle.addObserver(this)
 
         // TODO(b/254878364): remove this call to NPVC.getView()
-        centralSurfaces.notificationPanelViewController.view.repeatWhenAttached {
+        getShadeFoldAnimator().view?.repeatWhenAttached {
             repeatOnLifecycle(Lifecycle.State.STARTED) { listenForDozing(this) }
         }
     }
@@ -104,12 +110,12 @@ constructor(
     private fun shouldStartAnimation(): Boolean =
         alwaysOnEnabled &&
             wakefulnessLifecycle.lastSleepReason == PowerManager.GO_TO_SLEEP_REASON_DEVICE_FOLD &&
-            globalSettings.getString(Settings.Global.ANIMATOR_DURATION_SCALE) != "0"
+            globalSettings.getFloat(Settings.Global.ANIMATOR_DURATION_SCALE, 1f) != 0f
 
     override fun startAnimation(): Boolean =
         if (shouldStartAnimation()) {
             setAnimationState(playing = true)
-            centralSurfaces.notificationPanelViewController.prepareFoldToAodAnimation()
+            getShadeFoldAnimator().prepareFoldToAodAnimation()
             true
         } else {
             setAnimationState(playing = false)
@@ -120,11 +126,14 @@ constructor(
         if (isAnimationPlaying) {
             foldToAodLatencyTracker.cancel()
             cancelAnimation?.run()
-            centralSurfaces.notificationPanelViewController.cancelFoldToAodAnimation()
+            getShadeFoldAnimator().cancelFoldToAodAnimation()
         }
 
         setAnimationState(playing = false)
     }
+
+    private fun getShadeFoldAnimator(): ShadeFoldAnimator =
+        shadeViewController.shadeFoldAnimator
 
     private fun setAnimationState(playing: Boolean) {
         shouldPlayAnimation = playing
@@ -151,16 +160,15 @@ constructor(
             }
         } else if (isFolded && !isFoldHandled && alwaysOnEnabled && isDozing) {
             setAnimationState(playing = true)
-            centralSurfaces.notificationPanelViewController.prepareFoldToAodAnimation()
+            getShadeFoldAnimator().prepareFoldToAodAnimation()
 
             // We don't need to wait for the scrim as it is already displayed
             // but we should wait for the initial animation preparations to be drawn
             // (setting initial alpha/translation)
             // TODO(b/254878364): remove this call to NPVC.getView()
-            OneShotPreDrawListener.add(
-                centralSurfaces.notificationPanelViewController.view,
-                onReady
-            )
+            getShadeFoldAnimator().view?.let {
+                OneShotPreDrawListener.add(it, onReady)
+            }
         } else {
             // No animation, call ready callback immediately
             onReady.run()

@@ -18,7 +18,6 @@ public class NvAppProfiles {
     private static final String TAG = "NvAppProfiles";
     private final Context mContext;
     private INvCPLRemoteService mNvCPLSvc = null;
-    private IBinder mNvCPLSvcBinder = null;
 
     /**
      * Callback class given by the NvCPLService
@@ -54,17 +53,6 @@ public class NvAppProfiles {
         return null;
     }
 
-    public void setPowerMode(int index) {
-        if (DEBUG) Log.w(TAG, "Setting power mode: " + String.valueOf(index));
-
-        Intent intent = new Intent();
-        intent.setClassName(NvConstants.NvCPLSvc, NvConstants.NvCPLService);
-        intent.putExtra(NvConstants.NvOrigin, 1);
-        intent.putExtra(NvConstants.NvPowerMode , String.valueOf(index));
-
-        handleIntent(intent);
-    }
-
     public void powerHint(String packageName) {
         getNvCPLService();
         if (mNvCPLSvc != null) {
@@ -76,21 +64,14 @@ public class NvAppProfiles {
         }
     }
 
-    public void handleIntent(Intent intent) {
-        getNvCPLService();
-        if (mNvCPLSvc != null) {
-            try {
-                mNvCPLSvc.handleIntent(intent);
-            } catch (RemoteException ex) {
-                Log.w(TAG, "Failed to handle intent. Error=" + ex.getMessage());
-            }
-        }
-    }
-
     private void getNvCPLService() {
-        if (mNvCPLSvc == null || mNvCPLSvcBinder == null || !mNvCPLSvcBinder.isBinderAlive()) {
-            mNvCPLSvcBinder = ServiceManager.getService("nvcpl");
-            mNvCPLSvc = INvCPLRemoteService.Stub.asInterface(mNvCPLSvcBinder);
+        if (mNvCPLSvc == null) {
+            try {
+                mNvCPLSvc = INvCPLRemoteService.Stub.asInterface(
+                        ServiceManager.getService("nvcpl"));
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to bind to service. " + e.getMessage());
+            }
         }
     }
 }

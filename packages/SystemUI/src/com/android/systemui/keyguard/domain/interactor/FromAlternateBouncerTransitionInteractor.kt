@@ -17,15 +17,17 @@
 package com.android.systemui.keyguard.domain.interactor
 
 import android.animation.ValueAnimator
-import com.android.systemui.animation.Interpolators
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Application
 import com.android.systemui.keyguard.data.repository.KeyguardTransitionRepository
 import com.android.systemui.keyguard.shared.model.KeyguardState
-import com.android.systemui.keyguard.shared.model.TransitionInfo
-import com.android.systemui.keyguard.shared.model.WakefulnessState
+import com.android.systemui.power.domain.interactor.PowerInteractor
+import com.android.systemui.util.kotlin.Utils.Companion.toQuad
+import com.android.systemui.util.kotlin.Utils.Companion.toQuint
 import com.android.systemui.util.kotlin.sample
+import com.android.wm.shell.animation.Interpolators
 import javax.inject.Inject
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.combine
@@ -36,16 +38,21 @@ import kotlinx.coroutines.launch
 class FromAlternateBouncerTransitionInteractor
 @Inject
 constructor(
+    override val transitionRepository: KeyguardTransitionRepository,
+    override val transitionInteractor: KeyguardTransitionInteractor,
     @Application private val scope: CoroutineScope,
     private val keyguardInteractor: KeyguardInteractor,
-    private val keyguardTransitionRepository: KeyguardTransitionRepository,
-    private val keyguardTransitionInteractor: KeyguardTransitionInteractor,
-) : TransitionInteractor(FromAlternateBouncerTransitionInteractor::class.simpleName!!) {
+    private val powerInteractor: PowerInteractor,
+) :
+    TransitionInteractor(
+        fromState = KeyguardState.ALTERNATE_BOUNCER,
+    ) {
 
     override fun start() {
         listenForAlternateBouncerToGone()
         listenForAlternateBouncerToLockscreenAodOrDozing()
         listenForAlternateBouncerToPrimaryBouncer()
+        listenForTransitionToCamera(scope, keyguardInteractor)
     }
 
     private fun listenForAlternateBouncerToLockscreenAodOrDozing() {
@@ -58,8 +65,8 @@ constructor(
                 .sample(
                     combine(
                         keyguardInteractor.primaryBouncerShowing,
-                        keyguardTransitionInteractor.startedKeyguardTransitionStep,
-                        keyguardInteractor.wakefulnessModel,
+                        transitionInteractor.startedKeyguardTransitionStep,
+                        powerInteractor.isAwake,
                         keyguardInteractor.isAodAvailable,
                         ::toQuad
                     ),
@@ -70,7 +77,7 @@ constructor(
                         isAlternateBouncerShowing,
                         isPrimaryBouncerShowing,
                         lastStartedTransitionStep,
-                        wakefulnessState,
+                        isAwake,
                         isAodAvailable) ->
                     if (
                         !isAlternateBouncerShowing &&
@@ -78,10 +85,7 @@ constructor(
                             lastStartedTransitionStep.to == KeyguardState.ALTERNATE_BOUNCER
                     ) {
                         val to =
-                            if (
-                                wakefulnessState.state == WakefulnessState.STARTING_TO_SLEEP ||
-                                    wakefulnessState.state == WakefulnessState.ASLEEP
-                            ) {
+                            if (!isAwake) {
                                 if (isAodAvailable) {
                                     KeyguardState.AOD
                                 } else {
@@ -90,14 +94,7 @@ constructor(
                             } else {
                                 KeyguardState.LOCKSCREEN
                             }
-                        keyguardTransitionRepository.startTransition(
-                            TransitionInfo(
-                                ownerName = name,
-                                from = KeyguardState.ALTERNATE_BOUNCER,
-                                to = to,
-                                animator = getAnimator(),
-                            )
-                        )
+                        startTransitionTo(to)
                     }
                 }
         }
@@ -106,17 +103,10 @@ constructor(
     private fun listenForAlternateBouncerToGone() {
         scope.launch {
             keyguardInteractor.isKeyguardGoingAway
-                .sample(keyguardTransitionInteractor.finishedKeyguardState, ::Pair)
+                .sample(transitionInteractor.finishedKeyguardState, ::Pair)
                 .collect { (isKeyguardGoingAway, keyguardState) ->
                     if (isKeyguardGoingAway && keyguardState == KeyguardState.ALTERNATE_BOUNCER) {
-                        keyguardTransitionRepository.startTransition(
-                            TransitionInfo(
-                                ownerName = name,
-                                from = KeyguardState.ALTERNATE_BOUNCER,
-                                to = KeyguardState.GONE,
-                                animator = getAnimator(),
-                            )
-                        )
+                        startTransitionTo(KeyguardState.GONE)
                     }
                 }
         }
@@ -125,33 +115,31 @@ constructor(
     private fun listenForAlternateBouncerToPrimaryBouncer() {
         scope.launch {
             keyguardInteractor.primaryBouncerShowing
-                .sample(keyguardTransitionInteractor.startedKeyguardTransitionStep, ::Pair)
+                .sample(transitionInteractor.startedKeyguardTransitionStep, ::Pair)
                 .collect { (isPrimaryBouncerShowing, startedKeyguardState) ->
                     if (
                         isPrimaryBouncerShowing &&
                             startedKeyguardState.to == KeyguardState.ALTERNATE_BOUNCER
                     ) {
-                        keyguardTransitionRepository.startTransition(
-                            TransitionInfo(
-                                ownerName = name,
-                                from = KeyguardState.ALTERNATE_BOUNCER,
-                                to = KeyguardState.PRIMARY_BOUNCER,
-                                animator = getAnimator(),
-                            )
-                        )
+                        startTransitionTo(KeyguardState.PRIMARY_BOUNCER)
                     }
                 }
         }
     }
 
-    private fun getAnimator(): ValueAnimator {
+    override fun getDefaultAnimatorForTransitionsToState(toState: KeyguardState): ValueAnimator {
         return ValueAnimator().apply {
             interpolator = Interpolators.LINEAR
-            duration = TRANSITION_DURATION_MS
+            duration =
+                when (toState) {
+                    KeyguardState.GONE -> TO_GONE_DURATION
+                    else -> TRANSITION_DURATION_MS
+                }.inWholeMilliseconds
         }
     }
 
     companion object {
-        private const val TRANSITION_DURATION_MS = 300L
+        val TRANSITION_DURATION_MS = 300.milliseconds
+        val TO_GONE_DURATION = 500.milliseconds
     }
 }

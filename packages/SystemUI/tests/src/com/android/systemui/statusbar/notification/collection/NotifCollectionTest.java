@@ -26,6 +26,7 @@ import static android.service.notification.NotificationListenerService.REASON_CL
 import static android.service.notification.NotificationStats.DISMISSAL_SHADE;
 import static android.service.notification.NotificationStats.DISMISS_SENTIMENT_NEUTRAL;
 
+import static com.android.systemui.dump.LogBufferHelperKt.logcatLogBuffer;
 import static com.android.systemui.statusbar.notification.collection.NotifCollection.REASON_NOT_CANCELED;
 import static com.android.systemui.statusbar.notification.collection.NotifCollection.REASON_UNKNOWN;
 import static com.android.systemui.statusbar.notification.collection.NotificationEntry.DismissState.DISMISSED;
@@ -47,6 +48,7 @@ import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -92,6 +94,7 @@ import com.android.systemui.statusbar.notification.collection.notifcollection.No
 import com.android.systemui.statusbar.notification.collection.notifcollection.NotifCollectionLogger;
 import com.android.systemui.statusbar.notification.collection.notifcollection.NotifDismissInterceptor;
 import com.android.systemui.statusbar.notification.collection.notifcollection.NotifLifetimeExtender;
+import com.android.systemui.statusbar.notification.collection.provider.NotificationDismissibilityProvider;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 import com.android.systemui.util.concurrency.FakeExecutor;
 import com.android.systemui.util.time.FakeSystemClock;
@@ -119,7 +122,7 @@ public class NotifCollectionTest extends SysuiTestCase {
 
     @Mock private IStatusBarService mStatusBarService;
     @Mock private NotifPipelineFlags mNotifPipelineFlags;
-    @Mock private NotifCollectionLogger mLogger;
+    private final NotifCollectionLogger mLogger = spy(new NotifCollectionLogger(logcatLogBuffer()));
     @Mock private LogBufferEulogizer mEulogizer;
     @Mock private Handler mMainHandler;
 
@@ -168,7 +171,8 @@ public class NotifCollectionTest extends SysuiTestCase {
                 mMainHandler,
                 mBgExecutor,
                 mEulogizer,
-                mock(DumpManager.class));
+                mock(DumpManager.class),
+                mock(NotificationDismissibilityProvider.class));
         mCollection.attach(mGroupCoalescer);
         mCollection.addCollectionListener(mCollectionListener);
         mCollection.setBuildListener(mBuildListener);
@@ -1673,11 +1677,21 @@ public class NotifCollectionTest extends SysuiTestCase {
     }
 
     @Test
+    public void testCanDismissOtherNotificationChildren() {
+        // GIVEN an ongoing notification
+        final NotificationEntry container = new NotificationEntryBuilder()
+                .setGroup(mContext, "group")
+                .build();
+
+        // THEN its children are dismissible
+        assertTrue(mCollection.shouldAutoDismissChildren(
+                container, container.getSbn().getGroupKey()));
+    }
+
+    @Test
     public void testCannotDismissOngoingNotificationChildren() {
         // GIVEN an ongoing notification
         final NotificationEntry container = new NotificationEntryBuilder()
-                .setPkg(TEST_PACKAGE)
-                .setId(47)
                 .setGroup(mContext, "group")
                 .setFlag(mContext, FLAG_ONGOING_EVENT, true)
                 .build();
@@ -1691,7 +1705,24 @@ public class NotifCollectionTest extends SysuiTestCase {
     public void testCannotDismissNoClearNotifications() {
         // GIVEN an no-clear notification
         final NotificationEntry container = new NotificationEntryBuilder()
+                .setGroup(mContext, "group")
                 .setFlag(mContext, FLAG_NO_CLEAR, true)
+                .build();
+
+        // THEN its children are not dismissible
+        assertFalse(mCollection.shouldAutoDismissChildren(
+                container, container.getSbn().getGroupKey()));
+    }
+
+    @Test
+    public void testCannotDismissPriorityConversations() {
+        // GIVEN an no-clear notification
+        NotificationChannel channel =
+                new NotificationChannel("foo", "Foo", NotificationManager.IMPORTANCE_HIGH);
+        channel.setImportantConversation(true);
+        final NotificationEntry container = new NotificationEntryBuilder()
+                .setGroup(mContext, "group")
+                .setChannel(channel)
                 .build();
 
         // THEN its children are not dismissible
@@ -1703,8 +1734,6 @@ public class NotifCollectionTest extends SysuiTestCase {
     public void testCanDismissFgsNotificationChildren() {
         // GIVEN an FGS but not ongoing notification
         final NotificationEntry container = new NotificationEntryBuilder()
-                .setPkg(TEST_PACKAGE)
-                .setId(47)
                 .setGroup(mContext, "group")
                 .setFlag(mContext, FLAG_FOREGROUND_SERVICE, true)
                 .build();

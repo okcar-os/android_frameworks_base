@@ -21,7 +21,7 @@ import static android.content.Intent.ACTION_CLOSE_SYSTEM_DIALOGS;
 
 import static com.android.internal.util.ScreenshotHelper.SCREENSHOT_MSG_PROCESS_COMPLETE;
 import static com.android.internal.util.ScreenshotHelper.SCREENSHOT_MSG_URI;
-import static com.android.systemui.flags.Flags.SCREENSHOT_WORK_PROFILE_POLICY;
+import static com.android.systemui.flags.Flags.MULTI_DISPLAY_SCREENSHOT;
 import static com.android.systemui.screenshot.LogConfig.DEBUG_CALLBACK;
 import static com.android.systemui.screenshot.LogConfig.DEBUG_DISMISS;
 import static com.android.systemui.screenshot.LogConfig.DEBUG_SERVICE;
@@ -37,9 +37,6 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
-import android.graphics.Bitmap;
-import android.graphics.Insets;
-import android.graphics.Rect;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.IBinder;
@@ -50,22 +47,21 @@ import android.os.RemoteException;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.util.Log;
-import android.view.WindowManager;
+import android.view.Display;
 import android.widget.Toast;
 
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.logging.UiEventLogger;
 import com.android.internal.util.ScreenshotRequest;
-import com.android.systemui.R;
+import com.android.systemui.res.R;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.flags.FeatureFlags;
-import com.android.systemui.flags.FlagListenable.FlagEvent;
-import com.android.systemui.flags.Flags;
 
 import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 
 import javax.inject.Inject;
+import javax.inject.Provider;
 
 public class TakeScreenshotService extends Service {
     private static final String TAG = logTag(TakeScreenshotService.class);
@@ -89,16 +85,25 @@ public class TakeScreenshotService extends Service {
                 if (DEBUG_DISMISS) {
                     Log.d(TAG, "Received ACTION_CLOSE_SYSTEM_DIALOGS");
                 }
-                if (!mScreenshot.isPendingSharedTransition()) {
+                if (mFeatureFlags.isEnabled(MULTI_DISPLAY_SCREENSHOT)) {
+                    // TODO(b/295143676): move receiver inside executor when the flag is enabled.
+                    mTakeScreenshotExecutor.get().onCloseSystemDialogsReceived();
+                } else if (!mScreenshot.isPendingSharedTransition()) {
                     mScreenshot.dismissScreenshot(SCREENSHOT_DISMISSED_OTHER);
                 }
             }
         }
     };
+    private final Provider<TakeScreenshotExecutor> mTakeScreenshotExecutor;
+
 
     /** Informs about coarse grained state of the Controller. */
     public interface RequestCallback {
-        /** Respond to the current request indicating the screenshot request failed. */
+        /**
+         * Respond to the current request indicating the screenshot request failed.
+         * <p>
+         * After this, the service will be disconnected and all visible UI is removed.
+         */
         void reportError();
 
         /** The controller has completed handling this request UI has been removed */
@@ -106,25 +111,31 @@ public class TakeScreenshotService extends Service {
     }
 
     @Inject
-    public TakeScreenshotService(ScreenshotController screenshotController, UserManager userManager,
-            DevicePolicyManager devicePolicyManager, UiEventLogger uiEventLogger,
-            ScreenshotNotificationsController notificationsController, Context context,
-            @Background Executor bgExecutor, FeatureFlags featureFlags,
-            RequestProcessor processor) {
+    public TakeScreenshotService(ScreenshotController.Factory screenshotControllerFactory,
+            UserManager userManager, DevicePolicyManager devicePolicyManager,
+            UiEventLogger uiEventLogger,
+            ScreenshotNotificationsController.Factory notificationsControllerFactory,
+            Context context, @Background Executor bgExecutor, FeatureFlags featureFlags,
+            RequestProcessor processor, Provider<TakeScreenshotExecutor> takeScreenshotExecutor) {
         if (DEBUG_SERVICE) {
             Log.d(TAG, "new " + this);
         }
         mHandler = new Handler(Looper.getMainLooper(), this::handleMessage);
-        mScreenshot = screenshotController;
         mUserManager = userManager;
         mDevicePolicyManager = devicePolicyManager;
         mUiEventLogger = uiEventLogger;
-        mNotificationsController = notificationsController;
+        mNotificationsController = notificationsControllerFactory.create(Display.DEFAULT_DISPLAY);
         mContext = context;
         mBgExecutor = bgExecutor;
         mFeatureFlags = featureFlags;
-        mFeatureFlags.addListener(SCREENSHOT_WORK_PROFILE_POLICY, FlagEvent::requestNoRestart);
         mProcessor = processor;
+        mTakeScreenshotExecutor = takeScreenshotExecutor;
+        if (mFeatureFlags.isEnabled(MULTI_DISPLAY_SCREENSHOT)) {
+            mScreenshot = null;
+        } else {
+            mScreenshot = screenshotControllerFactory.create(
+                    Display.DEFAULT_DISPLAY, /* showUIOnExternalDisplay= */ false);
+        }
     }
 
     @Override
@@ -150,7 +161,11 @@ public class TakeScreenshotService extends Service {
         if (DEBUG_SERVICE) {
             Log.d(TAG, "onUnbind");
         }
-        mScreenshot.removeWindow();
+        if (mFeatureFlags.isEnabled(MULTI_DISPLAY_SCREENSHOT)) {
+            mTakeScreenshotExecutor.get().removeWindows();
+        } else {
+            mScreenshot.removeWindow();
+        }
         unregisterReceiver(mCloseSystemDialogs);
         return false;
     }
@@ -158,7 +173,11 @@ public class TakeScreenshotService extends Service {
     @Override
     public void onDestroy() {
         super.onDestroy();
-        mScreenshot.onDestroy();
+        if (mFeatureFlags.isEnabled(MULTI_DISPLAY_SCREENSHOT)) {
+            mTakeScreenshotExecutor.get().onDestroy();
+        } else {
+            mScreenshot.onDestroy();
+        }
         if (DEBUG_SERVICE) {
             Log.d(TAG, "onDestroy");
         }
@@ -225,76 +244,36 @@ public class TakeScreenshotService extends Service {
             return;
         }
 
-        if (mFeatureFlags.isEnabled(Flags.SCREENSHOT_METADATA_REFACTOR)) {
-            Log.d(TAG, "Processing screenshot data");
-            ScreenshotData screenshotData = ScreenshotData.fromRequest(request);
-            try {
-                mProcessor.processAsync(screenshotData,
-                        (data) -> dispatchToController(data, onSaved, callback));
-            } catch (IllegalStateException e) {
-                Log.e(TAG, "Failed to process screenshot request!", e);
-                logFailedRequest(request);
-                mNotificationsController.notifyScreenshotError(
-                        R.string.screenshot_failed_to_capture_text);
-                callback.reportError();
-            }
-        } else {
-            try {
-                mProcessor.processAsync(request,
-                        (r) -> dispatchToController(r, onSaved, callback));
-            } catch (IllegalStateException e) {
-                Log.e(TAG, "Failed to process screenshot request!", e);
-                logFailedRequest(request);
-                mNotificationsController.notifyScreenshotError(
-                        R.string.screenshot_failed_to_capture_text);
-                callback.reportError();
-            }
+        Log.d(TAG, "Processing screenshot data");
+
+
+        if (mFeatureFlags.isEnabled(MULTI_DISPLAY_SCREENSHOT)) {
+            mTakeScreenshotExecutor.get().executeScreenshotsAsync(request, onSaved, callback);
+            return;
+        }
+        // TODO(b/295143676): Delete the following after the flag is released.
+        try {
+            ScreenshotData screenshotData = ScreenshotData.fromRequest(
+                    request, Display.DEFAULT_DISPLAY);
+            mProcessor.processAsync(screenshotData, (data) ->
+                    dispatchToController(data, onSaved, callback));
+
+        } catch (IllegalStateException e) {
+            Log.e(TAG, "Failed to process screenshot request!", e);
+            logFailedRequest(request);
+            mNotificationsController.notifyScreenshotError(
+                    R.string.screenshot_failed_to_capture_text);
+            callback.reportError();
         }
     }
 
+    // TODO(b/295143676): Delete this.
     private void dispatchToController(ScreenshotData screenshot,
             Consumer<Uri> uriConsumer, RequestCallback callback) {
         mUiEventLogger.log(ScreenshotEvent.getScreenshotSource(screenshot.getSource()), 0,
                 screenshot.getPackageNameString());
+        Log.d(TAG, "Screenshot request: " + screenshot);
         mScreenshot.handleScreenshot(screenshot, uriConsumer, callback);
-    }
-
-    private void dispatchToController(ScreenshotRequest request,
-            Consumer<Uri> uriConsumer, RequestCallback callback) {
-        ComponentName topComponent = request.getTopComponent();
-        String packageName = topComponent == null ? "" : topComponent.getPackageName();
-        mUiEventLogger.log(
-                ScreenshotEvent.getScreenshotSource(request.getSource()), 0, packageName);
-
-        switch (request.getType()) {
-            case WindowManager.TAKE_SCREENSHOT_FULLSCREEN:
-                if (DEBUG_SERVICE) {
-                    Log.d(TAG, "handleMessage: TAKE_SCREENSHOT_FULLSCREEN");
-                }
-                mScreenshot.takeScreenshotFullscreen(topComponent, uriConsumer, callback);
-                break;
-            case WindowManager.TAKE_SCREENSHOT_SELECTED_REGION:
-                if (DEBUG_SERVICE) {
-                    Log.d(TAG, "handleMessage: TAKE_SCREENSHOT_SELECTED_REGION");
-                }
-                mScreenshot.takeScreenshotPartial(topComponent, uriConsumer, callback);
-                break;
-            case WindowManager.TAKE_SCREENSHOT_PROVIDED_IMAGE:
-                if (DEBUG_SERVICE) {
-                    Log.d(TAG, "handleMessage: TAKE_SCREENSHOT_PROVIDED_IMAGE");
-                }
-                Bitmap screenshot = request.getBitmap();
-                Rect screenBounds = request.getBoundsInScreen();
-                Insets insets = request.getInsets();
-                int taskId = request.getTaskId();
-                int userId = request.getUserId();
-
-                mScreenshot.handleImageAsScreenshot(screenshot, screenBounds, insets,
-                        taskId, userId, topComponent, uriConsumer, callback);
-                break;
-            default:
-                Log.wtf(TAG, "Invalid screenshot option: " + request.getType());
-        }
     }
 
     private void logFailedRequest(ScreenshotRequest request) {

@@ -22,7 +22,6 @@ import android.annotation.SystemApi;
 import android.annotation.TestApi;
 import android.media.AudioAttributes;
 import android.media.AudioSystem;
-import android.media.MediaRecorder;
 import android.os.Parcel;
 import android.os.Parcelable;
 import android.text.TextUtils;
@@ -31,6 +30,7 @@ import android.util.Log;
 import com.android.internal.annotations.GuardedBy;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
 
@@ -129,16 +129,16 @@ public final class AudioProductStrategy implements Parcelable {
                 return aa;
             }
         }
-        return new AudioAttributes.Builder()
-            .setContentType(AudioAttributes.CONTENT_TYPE_UNKNOWN)
-            .setUsage(AudioAttributes.USAGE_UNKNOWN).build();
+        return DEFAULT_ATTRIBUTES;
     }
 
     /**
      * @hide
-     * @param audioAttributes to identify AudioProductStrategy with
-     * @return legacy stream type associated with matched AudioProductStrategy
-     *              Defaults to STREAM_MUSIC if no match is found, or if matches is STREAM_DEFAULT
+     * @param audioAttributes to identify {@link AudioProductStrategy} with
+     * @return legacy stream type associated with matched {@link AudioProductStrategy}. If no
+     *              strategy found or found {@link AudioProductStrategy} does not have associated
+     *              legacy stream (i.e. associated with {@link AudioSystem#STREAM_DEFAULT}) defaults
+     *              to {@link AudioSystem#STREAM_MUSIC}
      */
     public static int getLegacyStreamTypeForStrategyWithAudioAttributes(
             @NonNull AudioAttributes audioAttributes) {
@@ -149,9 +149,9 @@ public final class AudioProductStrategy implements Parcelable {
                 int streamType = productStrategy.getLegacyStreamTypeForAudioAttributes(
                         audioAttributes);
                 if (streamType == AudioSystem.STREAM_DEFAULT) {
-                    Log.w(TAG, "Attributes " + audioAttributes.toString() + " ported by strategy "
-                            + productStrategy.getId() + " has no stream type associated, "
-                            + "DO NOT USE STREAM TO CONTROL THE VOLUME");
+                    Log.w(TAG, "Attributes " + audioAttributes + " supported by strategy "
+                            + productStrategy.getId() + " have no associated stream type, "
+                            + "therefore falling back to STREAM_MUSIC");
                     return AudioSystem.STREAM_MUSIC;
                 }
                 if (streamType < AudioSystem.getNumStreamTypes()) {
@@ -205,8 +205,14 @@ public final class AudioProductStrategy implements Parcelable {
 
         AudioProductStrategy thatStrategy = (AudioProductStrategy) o;
 
-        return mName == thatStrategy.mName && mId == thatStrategy.mId
-                && mAudioAttributesGroups.equals(thatStrategy.mAudioAttributesGroups);
+        return mId == thatStrategy.mId
+                && Objects.equals(mName, thatStrategy.mName)
+                && Arrays.equals(mAudioAttributesGroups, thatStrategy.mAudioAttributesGroups);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(mId, mName, Arrays.hashCode(mAudioAttributesGroups));
     }
 
     /**
@@ -235,9 +241,10 @@ public final class AudioProductStrategy implements Parcelable {
 
     /**
      * @hide
-     * @return the product strategy ID (which is the generalisation of Car Audio Usage / legacy
+     * @return the product strategy name (which is the generalisation of Car Audio Usage / legacy
      *         routing_strategy linked to {@link AudioAttributes#getUsage()}).
      */
+    @SystemApi
     @NonNull public String getName() {
         return mName;
     }
@@ -249,7 +256,7 @@ public final class AudioProductStrategy implements Parcelable {
     @SystemApi
     public @NonNull AudioAttributes getAudioAttributes() {
         // We need a choice, so take the first one
-        return mAudioAttributesGroups.length == 0 ? (new AudioAttributes.Builder().build())
+        return mAudioAttributesGroups.length == 0 ? DEFAULT_ATTRIBUTES
                 : mAudioAttributesGroups[0].getAudioAttributes();
     }
 
@@ -401,8 +408,7 @@ public final class AudioProductStrategy implements Parcelable {
      * Default attributes, with default source to be aligned with native.
      */
     private static final @NonNull AudioAttributes DEFAULT_ATTRIBUTES =
-            new AudioAttributes.Builder().setCapturePreset(MediaRecorder.AudioSource.DEFAULT)
-                                         .build();
+            new AudioAttributes.Builder().build();
 
     /**
      * @hide
@@ -459,7 +465,13 @@ public final class AudioProductStrategy implements Parcelable {
 
             return mVolumeGroupId == thatAag.mVolumeGroupId
                     && mLegacyStreamType == thatAag.mLegacyStreamType
-                    && mAudioAttributes.equals(thatAag.mAudioAttributes);
+                    && Arrays.equals(mAudioAttributes, thatAag.mAudioAttributes);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(mVolumeGroupId, mLegacyStreamType,
+                    Arrays.hashCode(mAudioAttributes));
         }
 
         public int getStreamType() {
@@ -472,8 +484,7 @@ public final class AudioProductStrategy implements Parcelable {
 
         public @NonNull AudioAttributes getAudioAttributes() {
             // We need a choice, so take the first one
-            return mAudioAttributes.length == 0 ? (new AudioAttributes.Builder().build())
-                    : mAudioAttributes[0];
+            return mAudioAttributes.length == 0 ? DEFAULT_ATTRIBUTES : mAudioAttributes[0];
         }
 
         /**

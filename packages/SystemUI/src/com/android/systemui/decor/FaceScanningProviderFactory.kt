@@ -94,11 +94,12 @@ class FaceScanningProviderFactory @Inject constructor(
         }
 
     fun canShowFaceScanningAnim(): Boolean {
-        return hasProviders && keyguardUpdateMonitor.isFaceEnrolled
+        return hasProviders && keyguardUpdateMonitor.isFaceEnabledAndEnrolled
     }
 
     fun shouldShowFaceScanningAnim(): Boolean {
-        return canShowFaceScanningAnim() && keyguardUpdateMonitor.isFaceDetectionRunning
+        return canShowFaceScanningAnim() &&
+                (keyguardUpdateMonitor.isFaceDetectionRunning || authController.isShowing)
     }
 }
 
@@ -110,7 +111,7 @@ class FaceScanningOverlayProviderImpl(
     private val mainExecutor: Executor,
     private val logger: ScreenDecorationsLogger,
 ) : BoundDecorProvider() {
-    override val viewId: Int = com.android.systemui.R.id.face_scanning_anim
+    override val viewId: Int = com.android.systemui.res.R.id.face_scanning_anim
 
     override fun onReloadResAndMeasure(
         view: View,
@@ -142,6 +143,7 @@ class FaceScanningOverlayProviderImpl(
                 keyguardUpdateMonitor,
                 mainExecutor,
                 logger,
+                authController,
         )
         view.id = viewId
         view.setColor(tintColor)

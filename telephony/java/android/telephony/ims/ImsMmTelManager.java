@@ -72,11 +72,18 @@ public class ImsMmTelManager implements RegistrationManager {
      */
     @Retention(RetentionPolicy.SOURCE)
     @IntDef(prefix = "WIFI_MODE_", value = {
+            WIFI_MODE_UNKNOWN,
             WIFI_MODE_WIFI_ONLY,
             WIFI_MODE_CELLULAR_PREFERRED,
             WIFI_MODE_WIFI_PREFERRED
             })
     public @interface WiFiCallingMode {}
+
+    /**
+     * Wifi calling mode is unknown. This is for initialization only.
+     * @hide
+     */
+    public static final int WIFI_MODE_UNKNOWN = -1;
 
     /**
      * Register for IMS over IWLAN if WiFi signal quality is high enough. Do not hand over to LTE
@@ -542,7 +549,6 @@ public class ImsMmTelManager implements RegistrationManager {
      *     <li>The caller has carrier privileges (see
      *     {@link android.telephony.TelephonyManager#hasCarrierPrivileges}) on any
      *     active subscription.</li>
-     *     <li>The caller is the default SMS app for the device.</li>
      * </ul>
      * <p>The profile owner is an app that owns a managed profile on the device; for more details
      * see <a href="https://developer.android.com/work/managed-profiles">Work profiles</a>.
@@ -555,7 +561,7 @@ public class ImsMmTelManager implements RegistrationManager {
      * @param c The MmTel {@link CapabilityCallback} to be registered.
      * @see #unregisterMmTelCapabilityCallback(CapabilityCallback)
      * @throws ImsException if the subscription associated with this callback is valid, but
-     * the {@link ImsService} associated with the subscription is not available. This can happen if
+     * the {@code ImsService} associated with the subscription is not available. This can happen if
      * the service crashed, for example. See {@link ImsException#getCode()} for a more detailed
      * reason.
      */
@@ -604,7 +610,6 @@ public class ImsMmTelManager implements RegistrationManager {
      *     <li>The caller has carrier privileges (see
      *     {@link android.telephony.TelephonyManager#hasCarrierPrivileges}) on any
      *     active subscription.</li>
-     *     <li>The caller is the default SMS app for the device.</li>
      * </ul>
      * <p>The profile owner is an app that owns a managed profile on the device; for more details
      * see <a href="https://developer.android.com/work/managed-profiles">Work profiles</a>.
@@ -652,7 +657,6 @@ public class ImsMmTelManager implements RegistrationManager {
      *     <li>The caller has carrier privileges (see
      *     {@link android.telephony.TelephonyManager#hasCarrierPrivileges}) on any
      *     active subscription.</li>
-     *     <li>The caller is the default SMS app for the device.</li>
      * </ul>
      * <p>The profile owner is an app that owns a managed profile on the device; for more details
      * see <a href="https://developer.android.com/work/managed-profiles">Work profiles</a>.
@@ -865,7 +869,6 @@ public class ImsMmTelManager implements RegistrationManager {
      *     <li>The caller has carrier privileges (see
      *     {@link android.telephony.TelephonyManager#hasCarrierPrivileges}) on any
      *     active subscription.</li>
-     *     <li>The caller is the default SMS app for the device.</li>
      * </ul>
      * <p>The profile owner is an app that owns a managed profile on the device; for more details
      * see <a href="https://developer.android.com/work/managed-profiles">Work profiles</a>.
@@ -940,7 +943,6 @@ public class ImsMmTelManager implements RegistrationManager {
      *     <li>The caller has carrier privileges (see
      *     {@link android.telephony.TelephonyManager#hasCarrierPrivileges}) on any
      *     active subscription.</li>
-     *     <li>The caller is the default SMS app for the device.</li>
      * </ul>
      * <p>The profile owner is an app that owns a managed profile on the device; for more details
      * see <a href="https://developer.android.com/work/managed-profiles">Work profiles</a>.
@@ -1114,7 +1116,6 @@ public class ImsMmTelManager implements RegistrationManager {
      *     <li>The caller has carrier privileges (see
      *     {@link android.telephony.TelephonyManager#hasCarrierPrivileges}) on any
      *     active subscription.</li>
-     *     <li>The caller is the default SMS app for the device.</li>
      * </ul>
      * <p>The profile owner is an app that owns a managed profile on the device; for more details
      * see <a href="https://developer.android.com/work/managed-profiles">Work profiles</a>.
@@ -1229,7 +1230,6 @@ public class ImsMmTelManager implements RegistrationManager {
      *     <li>The caller has carrier privileges (see
      *     {@link android.telephony.TelephonyManager#hasCarrierPrivileges}) on any
      *     active subscription.</li>
-     *     <li>The caller is the default SMS app for the device.</li>
      * </ul>
      * <p>The profile owner is an app that owns a managed profile on the device; for more details
      * see <a href="https://developer.android.com/work/managed-profiles">Work profiles</a>.
@@ -1418,7 +1418,6 @@ public class ImsMmTelManager implements RegistrationManager {
      *     <li>The caller has carrier privileges (see
      *     {@link android.telephony.TelephonyManager#hasCarrierPrivileges}) on any
      *     active subscription.</li>
-     *     <li>The caller is the default SMS app for the device.</li>
      * </ul>
      * <p>The profile owner is an app that owns a managed profile on the device; for more details
      * see <a href="https://developer.android.com/work/managed-profiles">Work profiles</a>.
@@ -1580,5 +1579,25 @@ public class ImsMmTelManager implements RegistrationManager {
                         .getTelephonyServiceRegisterer()
                         .get());
         return binder;
+    }
+
+    /**
+     * Convert Wi-Fi calling mode to string.
+     *
+     * @param mode Wi-Fi calling mode.
+     * @return The Wi-Fi calling mode in string format.
+     *
+     * @hide
+     */
+    @NonNull
+    public static String wifiCallingModeToString(@ImsMmTelManager.WiFiCallingMode int mode) {
+        switch (mode) {
+            case ImsMmTelManager.WIFI_MODE_UNKNOWN: return "UNKNOWN";
+            case ImsMmTelManager.WIFI_MODE_WIFI_ONLY: return "WIFI_ONLY";
+            case ImsMmTelManager.WIFI_MODE_CELLULAR_PREFERRED: return "CELLULAR_PREFERRED";
+            case ImsMmTelManager.WIFI_MODE_WIFI_PREFERRED: return "WIFI_PREFERRED";
+            default:
+                return "UNKNOWN(" + mode + ")";
+        }
     }
 }

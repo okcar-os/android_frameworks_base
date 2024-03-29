@@ -46,6 +46,7 @@ import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 @RunWith(RobolectricTestRunner.class)
@@ -393,6 +394,36 @@ public class BluetoothEventManagerTest {
         assertThat(mCachedDevice2.isActiveDevice(BluetoothProfile.A2DP)).isFalse();
         assertThat(mCachedDevice2.isActiveDevice(BluetoothProfile.HEADSET)).isFalse();
         assertThat(mCachedDevice2.isActiveDevice(BluetoothProfile.HEARING_AID)).isFalse();
+    }
+
+    @Test
+    public void dispatchActiveDeviceChanged_callExpectedOnActiveDeviceChanged() {
+        mBluetoothEventManager.registerCallback(mBluetoothCallback);
+        when(mDevice1.getBondState()).thenReturn(BluetoothDevice.BOND_BONDED);
+        when(mCachedDeviceManager.getCachedDevicesCopy()).thenReturn(
+                Collections.singletonList(mCachedDevice1));
+
+        mBluetoothEventManager.dispatchActiveDeviceChanged(mCachedDevice1,
+                BluetoothProfile.HEARING_AID);
+
+        verify(mCachedDeviceManager).onActiveDeviceChanged(mCachedDevice1);
+        verify(mBluetoothCallback).onActiveDeviceChanged(mCachedDevice1,
+                BluetoothProfile.HEARING_AID);
+    }
+
+    @Test
+    public void dispatchActiveDeviceChanged_activeFromSubDevice_mainCachedDeviceActive() {
+        CachedBluetoothDevice subDevice = new CachedBluetoothDevice(mContext, mLocalProfileManager,
+                mDevice3);
+        mCachedDevice1.setSubDevice(subDevice);
+        when(mCachedDeviceManager.getCachedDevicesCopy()).thenReturn(
+                Collections.singletonList(mCachedDevice1));
+        mCachedDevice1.onProfileStateChanged(mHearingAidProfile,
+                BluetoothProfile.STATE_CONNECTED);
+
+        assertThat(mCachedDevice1.isActiveDevice(BluetoothProfile.HEARING_AID)).isFalse();
+        mBluetoothEventManager.dispatchActiveDeviceChanged(subDevice, BluetoothProfile.HEARING_AID);
+        assertThat(mCachedDevice1.isActiveDevice(BluetoothProfile.HEARING_AID)).isTrue();
     }
 
     @Test

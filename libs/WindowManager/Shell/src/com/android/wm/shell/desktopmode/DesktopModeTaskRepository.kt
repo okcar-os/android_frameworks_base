@@ -16,32 +16,63 @@
 
 package com.android.wm.shell.desktopmode
 
+import android.graphics.Region
 import android.util.ArrayMap
 import android.util.ArraySet
+import android.util.SparseArray
+import androidx.core.util.forEach
+import androidx.core.util.keyIterator
+import androidx.core.util.valueIterator
+import com.android.wm.shell.protolog.ShellProtoLogGroup.WM_SHELL_DESKTOP_MODE
+import com.android.wm.shell.util.KtProtoLog
+import java.io.PrintWriter
 import java.util.concurrent.Executor
+import java.util.function.Consumer
 
 /**
  * Keeps track of task data related to desktop mode.
  */
 class DesktopModeTaskRepository {
 
-    /**
-     * Set of task ids that are marked as active in desktop mode.
-     * Active tasks in desktop mode are freeform tasks that are visible or have been visible after
-     * desktop mode was activated.
-     * Task gets removed from this list when it vanishes. Or when desktop mode is turned off.
-     */
-    private val activeTasks = ArraySet<Int>()
-    private val visibleTasks = ArraySet<Int>()
+    /** Task data that is tracked per display */
+    private data class DisplayData(
+        /**
+         * Set of task ids that are marked as active in desktop mode. Active tasks in desktop mode
+         * are freeform tasks that are visible or have been visible after desktop mode was
+         * activated. Task gets removed from this list when it vanishes. Or when desktop mode is
+         * turned off.
+         */
+        val activeTasks: ArraySet<Int> = ArraySet(),
+        val visibleTasks: ArraySet<Int> = ArraySet(),
+        var stashed: Boolean = false
+    )
+
     // Tasks currently in freeform mode, ordered from top to bottom (top is at index 0).
     private val freeformTasksInZOrder = mutableListOf<Int>()
     private val activeTasksListeners = ArraySet<ActiveTasksListener>()
     // Track visible tasks separately because a task may be part of the desktop but not visible.
     private val visibleTasksListeners = ArrayMap<VisibleTasksListener, Executor>()
+    // Track corner/caption regions of desktop tasks, used to determine gesture exclusion
+    private val desktopExclusionRegions = SparseArray<Region>()
+    private var desktopGestureExclusionListener: Consumer<Region>? = null
+    private var desktopGestureExclusionExecutor: Executor? = null
 
-    /**
-     * Add a [ActiveTasksListener] to be notified of updates to active tasks in the repository.
-     */
+    private val displayData =
+        object : SparseArray<DisplayData>() {
+            /**
+             * Get the [DisplayData] associated with this [displayId]
+             *
+             * Creates a new instance if one does not exist
+             */
+            fun getOrCreate(displayId: Int): DisplayData {
+                if (!contains(displayId)) {
+                    put(displayId, DisplayData())
+                }
+                return get(displayId)
+            }
+        }
+
+    /** Add a [ActiveTasksListener] to be notified of updates to active tasks in the repository. */
     fun addActiveTaskListener(activeTasksListener: ActiveTasksListener) {
         activeTasksListeners.add(activeTasksListener)
     }
@@ -49,10 +80,42 @@ class DesktopModeTaskRepository {
     /**
      * Add a [VisibleTasksListener] to be notified when freeform tasks are visible or not.
      */
-    fun addVisibleTasksListener(visibleTasksListener: VisibleTasksListener, executor: Executor) {
-        visibleTasksListeners.put(visibleTasksListener, executor)
-        executor.execute(
-                Runnable { visibleTasksListener.onVisibilityChanged(visibleTasks.size > 0) })
+    fun addVisibleTasksListener(
+        visibleTasksListener: VisibleTasksListener,
+        executor: Executor
+    ) {
+        visibleTasksListeners[visibleTasksListener] = executor
+        displayData.keyIterator().forEach { displayId ->
+            val visibleTasks = getVisibleTaskCount(displayId)
+            val stashed = isStashed(displayId)
+            executor.execute {
+                visibleTasksListener.onVisibilityChanged(displayId, visibleTasks > 0)
+                visibleTasksListener.onStashedChanged(displayId, stashed)
+            }
+        }
+    }
+
+    /**
+     * Add a Consumer which will inform other classes of changes to exclusion regions for all
+     * Desktop tasks.
+     */
+    fun setExclusionRegionListener(regionListener: Consumer<Region>, executor: Executor) {
+        desktopGestureExclusionListener = regionListener
+        desktopGestureExclusionExecutor = executor
+        executor.execute {
+            desktopGestureExclusionListener?.accept(calculateDesktopExclusionRegion())
+        }
+    }
+
+    /**
+     * Create a new merged region representative of all exclusion regions in all desktop tasks.
+     */
+    private fun calculateDesktopExclusionRegion(): Region {
+        val desktopExclusionRegion = Region()
+        desktopExclusionRegions.valueIterator().forEach { taskExclusionRegion ->
+            desktopExclusionRegion.op(taskExclusionRegion, Region.Op.UNION)
+        }
+        return desktopExclusionRegion
     }
 
     /**
@@ -70,14 +133,27 @@ class DesktopModeTaskRepository {
     }
 
     /**
-     * Mark a task with given [taskId] as active.
+     * Mark a task with given [taskId] as active on given [displayId]
      *
-     * @return `true` if the task was not active
+     * @return `true` if the task was not active on given [displayId]
      */
-    fun addActiveTask(taskId: Int): Boolean {
-        val added = activeTasks.add(taskId)
+    fun addActiveTask(displayId: Int, taskId: Int): Boolean {
+        // Check if task is active on another display, if so, remove it
+        displayData.forEach { id, data ->
+            if (id != displayId && data.activeTasks.remove(taskId)) {
+                activeTasksListeners.onEach { it.onActiveTasksChanged(id) }
+            }
+        }
+
+        val added = displayData.getOrCreate(displayId).activeTasks.add(taskId)
         if (added) {
-            activeTasksListeners.onEach { it.onActiveTasksChanged() }
+            KtProtoLog.d(
+                WM_SHELL_DESKTOP_MODE,
+                "DesktopTaskRepo: add active task=%d displayId=%d",
+                taskId,
+                displayId
+            )
+            activeTasksListeners.onEach { it.onActiveTasksChanged(displayId) }
         }
         return added
     }
@@ -88,71 +164,118 @@ class DesktopModeTaskRepository {
      * @return `true` if the task was active
      */
     fun removeActiveTask(taskId: Int): Boolean {
-        val removed = activeTasks.remove(taskId)
-        if (removed) {
-            activeTasksListeners.onEach { it.onActiveTasksChanged() }
+        var result = false
+        displayData.forEach { displayId, data ->
+            if (data.activeTasks.remove(taskId)) {
+                activeTasksListeners.onEach { it.onActiveTasksChanged(displayId) }
+                result = true
+            }
         }
-        return removed
+        if (result) {
+            KtProtoLog.d(WM_SHELL_DESKTOP_MODE, "DesktopTaskRepo: remove active task=%d", taskId)
+        }
+        return result
     }
 
     /**
      * Check if a task with the given [taskId] was marked as an active task
      */
     fun isActiveTask(taskId: Int): Boolean {
-        return activeTasks.contains(taskId)
+        return displayData.valueIterator().asSequence().any { data ->
+            data.activeTasks.contains(taskId)
+        }
     }
 
     /**
      * Whether a task is visible.
      */
     fun isVisibleTask(taskId: Int): Boolean {
-        return visibleTasks.contains(taskId)
+        return displayData.valueIterator().asSequence().any { data ->
+            data.visibleTasks.contains(taskId)
+        }
     }
 
     /**
-     * Get a set of the active tasks
+     * Get a set of the active tasks for given [displayId]
      */
-    fun getActiveTasks(): ArraySet<Int> {
-        return ArraySet(activeTasks)
+    fun getActiveTasks(displayId: Int): ArraySet<Int> {
+        return ArraySet(displayData[displayId]?.activeTasks)
     }
 
     /**
      * Get a list of freeform tasks, ordered from top-bottom (top at index 0).
      */
+     // TODO(b/278084491): pass in display id
     fun getFreeformTasksInZOrder(): List<Int> {
         return freeformTasksInZOrder
     }
 
     /**
      * Updates whether a freeform task with this id is visible or not and notifies listeners.
+     *
+     * If the task was visible on a different display with a different displayId, it is removed from
+     * the set of visible tasks on that display. Listeners will be notified.
      */
-    fun updateVisibleFreeformTasks(taskId: Int, visible: Boolean) {
-        val prevCount: Int = visibleTasks.size
+    fun updateVisibleFreeformTasks(displayId: Int, taskId: Int, visible: Boolean) {
         if (visible) {
-            visibleTasks.add(taskId)
-        } else {
-            visibleTasks.remove(taskId)
-        }
-        if (prevCount == 0 && visibleTasks.size == 1 ||
-                prevCount > 0 && visibleTasks.size == 0) {
-            for ((listener, executor) in visibleTasksListeners) {
-                executor.execute(
-                        Runnable { listener.onVisibilityChanged(visibleTasks.size > 0) })
+            // Task is visible. Check if we need to remove it from any other display.
+            val otherDisplays = displayData.keyIterator().asSequence().filter { it != displayId }
+            for (otherDisplayId in otherDisplays) {
+                if (displayData[otherDisplayId].visibleTasks.remove(taskId)) {
+                    // Task removed from other display, check if we should notify listeners
+                    if (displayData[otherDisplayId].visibleTasks.isEmpty()) {
+                        notifyVisibleTaskListeners(otherDisplayId, hasVisibleFreeformTasks = false)
+                    }
+                }
             }
+        }
+
+        val prevCount = getVisibleTaskCount(displayId)
+        if (visible) {
+            displayData.getOrCreate(displayId).visibleTasks.add(taskId)
+        } else {
+            displayData[displayId]?.visibleTasks?.remove(taskId)
+        }
+        val newCount = getVisibleTaskCount(displayId)
+
+        if (prevCount != newCount) {
+            KtProtoLog.d(
+                WM_SHELL_DESKTOP_MODE,
+                "DesktopTaskRepo: update task visibility taskId=%d visible=%b displayId=%d",
+                taskId,
+                visible,
+                displayId
+            )
+        }
+
+        // Check if count changed and if there was no tasks or this is the first task
+        if (prevCount != newCount && (prevCount == 0 || newCount == 0)) {
+            notifyVisibleTaskListeners(displayId, newCount > 0)
+        }
+    }
+
+    private fun notifyVisibleTaskListeners(displayId: Int, hasVisibleFreeformTasks: Boolean) {
+        visibleTasksListeners.forEach { (listener, executor) ->
+            executor.execute { listener.onVisibilityChanged(displayId, hasVisibleFreeformTasks) }
         }
     }
 
     /**
-     * Get number of tasks that are marked as visible
+     * Get number of tasks that are marked as visible on given [displayId]
      */
-    fun getVisibleTaskCount(): Int {
-        return visibleTasks.size
+    fun getVisibleTaskCount(displayId: Int): Int {
+        return displayData[displayId]?.visibleTasks?.size ?: 0
     }
 
     /**
      * Add (or move if it already exists) the task to the top of the ordered list.
      */
     fun addOrMoveFreeformTaskToTop(taskId: Int) {
+        KtProtoLog.d(
+            WM_SHELL_DESKTOP_MODE,
+            "DesktopTaskRepo: add or move task to top taskId=%d",
+            taskId
+        )
         if (freeformTasksInZOrder.contains(taskId)) {
             freeformTasksInZOrder.remove(taskId)
         }
@@ -163,7 +286,82 @@ class DesktopModeTaskRepository {
      * Remove the task from the ordered list.
      */
     fun removeFreeformTask(taskId: Int) {
+        KtProtoLog.d(
+            WM_SHELL_DESKTOP_MODE,
+            "DesktopTaskRepo: remove freeform task from ordered list taskId=%d",
+            taskId
+        )
         freeformTasksInZOrder.remove(taskId)
+    }
+
+    /**
+     * Updates the active desktop gesture exclusion regions; if desktopExclusionRegions has been
+     * accepted by desktopGestureExclusionListener, it will be updated in the
+     * appropriate classes.
+     */
+    fun updateTaskExclusionRegions(taskId: Int, taskExclusionRegions: Region) {
+        desktopExclusionRegions.put(taskId, taskExclusionRegions)
+        desktopGestureExclusionExecutor?.execute {
+            desktopGestureExclusionListener?.accept(calculateDesktopExclusionRegion())
+        }
+    }
+
+    /**
+     * Removes the desktop gesture exclusion region for the specified task; if exclusionRegion
+     * has been accepted by desktopGestureExclusionListener, it will be updated in the
+     * appropriate classes.
+     */
+    fun removeExclusionRegion(taskId: Int) {
+        desktopExclusionRegions.delete(taskId)
+        desktopGestureExclusionExecutor?.execute {
+            desktopGestureExclusionListener?.accept(calculateDesktopExclusionRegion())
+        }
+    }
+
+    /**
+     * Update stashed status on display with id [displayId]
+     */
+    fun setStashed(displayId: Int, stashed: Boolean) {
+        val data = displayData.getOrCreate(displayId)
+        val oldValue = data.stashed
+        data.stashed = stashed
+        if (oldValue != stashed) {
+            KtProtoLog.d(
+                    WM_SHELL_DESKTOP_MODE,
+                    "DesktopTaskRepo: mark stashed=%b displayId=%d",
+                    stashed,
+                    displayId
+            )
+            visibleTasksListeners.forEach { (listener, executor) ->
+                executor.execute { listener.onStashedChanged(displayId, stashed) }
+            }
+        }
+    }
+
+    /**
+     * Check if display with id [displayId] has desktop tasks stashed
+     */
+    fun isStashed(displayId: Int): Boolean {
+        return displayData[displayId]?.stashed ?: false
+    }
+
+    internal fun dump(pw: PrintWriter, prefix: String) {
+        val innerPrefix = "$prefix  "
+        pw.println("${prefix}DesktopModeTaskRepository")
+        dumpDisplayData(pw, innerPrefix)
+        pw.println("${innerPrefix}freeformTasksInZOrder=${freeformTasksInZOrder.toDumpString()}")
+        pw.println("${innerPrefix}activeTasksListeners=${activeTasksListeners.size}")
+        pw.println("${innerPrefix}visibleTasksListeners=${visibleTasksListeners.size}")
+    }
+
+    private fun dumpDisplayData(pw: PrintWriter, prefix: String) {
+        val innerPrefix = "$prefix  "
+        displayData.forEach { displayId, data ->
+            pw.println("${prefix}Display $displayId:")
+            pw.println("${innerPrefix}activeTasks=${data.activeTasks.toDumpString()}")
+            pw.println("${innerPrefix}visibleTasks=${data.visibleTasks.toDumpString()}")
+            pw.println("${innerPrefix}stashed=${data.stashed}")
+        }
     }
 
     /**
@@ -173,8 +371,7 @@ class DesktopModeTaskRepository {
         /**
          * Called when the active tasks change in desktop mode.
          */
-        @JvmDefault
-        fun onActiveTasksChanged() {}
+        fun onActiveTasksChanged(displayId: Int) {}
     }
 
     /**
@@ -184,7 +381,15 @@ class DesktopModeTaskRepository {
         /**
          * Called when the desktop starts or stops showing freeform tasks.
          */
-        @JvmDefault
-        fun onVisibilityChanged(hasVisibleFreeformTasks: Boolean) {}
+        fun onVisibilityChanged(displayId: Int, hasVisibleFreeformTasks: Boolean) {}
+
+        /**
+         * Called when the desktop stashed status changes.
+         */
+        fun onStashedChanged(displayId: Int, stashed: Boolean) {}
     }
+}
+
+private fun <T> Iterable<T>.toDumpString(): String {
+    return joinToString(separator = ", ", prefix = "[", postfix = "]")
 }

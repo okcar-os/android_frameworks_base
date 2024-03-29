@@ -16,9 +16,9 @@
 
 package com.android.systemui.shade
 
+import com.android.systemui.common.buffer.RingBuffer
 import com.android.systemui.dump.DumpsysTableLogger
 import com.android.systemui.dump.Row
-import com.android.systemui.plugins.util.RingBuffer
 import com.android.systemui.shade.NotificationShadeWindowState.Buffer
 import com.android.systemui.statusbar.StatusBarState
 
@@ -32,7 +32,7 @@ class NotificationShadeWindowState(
     @JvmField var keyguardNeedsInput: Boolean = false,
     @JvmField var panelVisible: Boolean = false,
     /** shade panel is expanded (expansion fraction > 0) */
-    @JvmField var panelExpanded: Boolean = false,
+    @JvmField var shadeOrQsExpanded: Boolean = false,
     @JvmField var notificationShadeFocusable: Boolean = false,
     @JvmField var bouncerShowing: Boolean = false,
     @JvmField var keyguardFadingAway: Boolean = false,
@@ -40,13 +40,13 @@ class NotificationShadeWindowState(
     @JvmField var qsExpanded: Boolean = false,
     @JvmField var headsUpNotificationShowing: Boolean = false,
     @JvmField var lightRevealScrimOpaque: Boolean = false,
+    @JvmField var isSwitchingUsers: Boolean = false,
     @JvmField var forceWindowCollapsed: Boolean = false,
     @JvmField var forceDozeBrightness: Boolean = false,
     // TODO: forceUserActivity seems to be unused, delete?
     @JvmField var forceUserActivity: Boolean = false,
     @JvmField var launchingActivityFromNotification: Boolean = false,
     @JvmField var mediaBackdropShowing: Boolean = false,
-    @JvmField var wallpaperSupportsAmbientMode: Boolean = false,
     @JvmField var windowNotTouchable: Boolean = false,
     @JvmField var componentsForcingTopUi: MutableSet<String> = mutableSetOf(),
     @JvmField var forceOpenTokens: MutableSet<Any> = mutableSetOf(),
@@ -71,7 +71,7 @@ class NotificationShadeWindowState(
             keyguardOccluded.toString(),
             keyguardNeedsInput.toString(),
             panelVisible.toString(),
-            panelExpanded.toString(),
+            shadeOrQsExpanded.toString(),
             notificationShadeFocusable.toString(),
             bouncerShowing.toString(),
             keyguardFadingAway.toString(),
@@ -79,12 +79,12 @@ class NotificationShadeWindowState(
             qsExpanded.toString(),
             headsUpNotificationShowing.toString(),
             lightRevealScrimOpaque.toString(),
+            isSwitchingUsers.toString(),
             forceWindowCollapsed.toString(),
             forceDozeBrightness.toString(),
             forceUserActivity.toString(),
             launchingActivityFromNotification.toString(),
             mediaBackdropShowing.toString(),
-            wallpaperSupportsAmbientMode.toString(),
             windowNotTouchable.toString(),
             componentsForcingTopUi.toString(),
             forceOpenTokens.toString(),
@@ -119,12 +119,12 @@ class NotificationShadeWindowState(
             qsExpanded: Boolean,
             headsUpShowing: Boolean,
             lightRevealScrimOpaque: Boolean,
+            isSwitchingUsers: Boolean,
             forceCollapsed: Boolean,
             forceDozeBrightness: Boolean,
             forceUserActivity: Boolean,
             launchingActivity: Boolean,
             backdropShowing: Boolean,
-            wallpaperSupportsAmbientMode: Boolean,
             notTouchable: Boolean,
             componentsForcingTopUi: MutableSet<String>,
             forceOpenTokens: MutableSet<Any>,
@@ -140,7 +140,7 @@ class NotificationShadeWindowState(
                 this.keyguardOccluded = keyguardOccluded
                 this.keyguardNeedsInput = keyguardNeedsInput
                 this.panelVisible = panelVisible
-                this.panelExpanded = panelExpanded
+                this.shadeOrQsExpanded = panelExpanded
                 this.notificationShadeFocusable = notificationShadeFocusable
                 this.bouncerShowing = bouncerShowing
                 this.keyguardFadingAway = keyguardFadingAway
@@ -148,12 +148,12 @@ class NotificationShadeWindowState(
                 this.qsExpanded = qsExpanded
                 this.headsUpNotificationShowing = headsUpShowing
                 this.lightRevealScrimOpaque = lightRevealScrimOpaque
+                this.isSwitchingUsers = isSwitchingUsers
                 this.forceWindowCollapsed = forceCollapsed
                 this.forceDozeBrightness = forceDozeBrightness
                 this.forceUserActivity = forceUserActivity
                 this.launchingActivityFromNotification = launchingActivity
                 this.mediaBackdropShowing = backdropShowing
-                this.wallpaperSupportsAmbientMode = wallpaperSupportsAmbientMode
                 this.windowNotTouchable = notTouchable
                 this.componentsForcingTopUi.clear()
                 this.componentsForcingTopUi.addAll(componentsForcingTopUi)
@@ -174,7 +174,7 @@ class NotificationShadeWindowState(
          * @see [NotificationShadeWindowState.asStringList]
          */
         fun toList(): List<Row> {
-            return buffer.asSequence().map { it.asStringList }.toList()
+            return buffer.map { it.asStringList }
         }
     }
 
@@ -195,12 +195,12 @@ class NotificationShadeWindowState(
                 "qsExpanded",
                 "headsUpShowing",
                 "lightRevealScrimOpaque",
+                "isSwitchingUsers",
                 "forceCollapsed",
                 "forceDozeBrightness",
                 "forceUserActivity",
                 "launchingActivity",
                 "backdropShowing",
-                "wallpaperSupportsAmbientMode",
                 "notTouchable",
                 "componentsForcingTopUi",
                 "forceOpenTokens",

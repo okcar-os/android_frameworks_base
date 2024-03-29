@@ -34,12 +34,12 @@ interface ISystemUiProxy {
     /**
      * Begins screen pinning on the provided {@param taskId}.
      */
-    void startScreenPinning(int taskId) = 1;
+    oneway void startScreenPinning(int taskId) = 1;
 
     /**
      * Notifies SystemUI that Overview is shown.
      */
-    void onOverviewShown(boolean fromHome) = 6;
+    oneway void onOverviewShown(boolean fromHome) = 6;
 
     /**
      * Proxies motion events from the homescreen UI to the status bar. Only called when
@@ -48,57 +48,69 @@ interface ISystemUiProxy {
      *
      * Normal gesture: DOWN, MOVE/POINTER_DOWN/POINTER_UP)*, UP or CANCLE
      */
-    void onStatusBarMotionEvent(in MotionEvent event) = 9;
+    oneway void onStatusBarTouchEvent(in MotionEvent event) = 9;
 
     /**
      * Proxies the assistant gesture's progress started from navigation bar.
      */
-    void onAssistantProgress(float progress) = 12;
+    oneway void onAssistantProgress(float progress) = 12;
 
     /**
     * Proxies the assistant gesture fling velocity (in pixels per millisecond) upon completion.
     * Velocity is 0 for drag gestures.
     */
-    void onAssistantGestureCompletion(float velocity) = 18;
+    oneway void onAssistantGestureCompletion(float velocity) = 18;
 
     /**
      * Start the assistant.
      */
-    void startAssistant(in Bundle bundle) = 13;
+    oneway void startAssistant(in Bundle bundle) = 13;
+
+    /**
+     * Indicates that the given Assist invocation types should be handled by Launcher via
+     * OverviewProxy#onAssistantOverrideInvoked and should not be invoked by SystemUI.
+     *
+     * @param invocationTypes The invocation types that will henceforth be handled via
+     *         OverviewProxy (Launcher); other invocation types should be handled by SysUI.
+     */
+    oneway void setAssistantOverridesRequested(in int[] invocationTypes) = 53;
 
     /**
      * Notifies that the accessibility button in the system's navigation area has been clicked
      */
-    void notifyAccessibilityButtonClicked(int displayId) = 15;
+    oneway void notifyAccessibilityButtonClicked(int displayId) = 15;
 
     /**
      * Notifies that the accessibility button in the system's navigation area has been long clicked
      */
-    void notifyAccessibilityButtonLongClicked() = 16;
+    oneway void notifyAccessibilityButtonLongClicked() = 16;
 
     /**
      * Ends the system screen pinning.
      */
-    void stopScreenPinning() = 17;
+    oneway void stopScreenPinning() = 17;
 
     /**
      * Notifies that quickstep will switch to a new task
      * @param rotation indicates which Surface.Rotation the gesture was started in
      */
-    void notifyPrioritizedRotation(int rotation) = 25;
+    oneway void notifyPrioritizedRotation(int rotation) = 25;
 
     /**
      * Notifies to expand notification panel.
      */
-    void expandNotificationPanel() = 29;
+    oneway void expandNotificationPanel() = 29;
 
     /**
      * Notifies SystemUI to invoke Back.
      */
-    void onBackPressed() = 44;
+    oneway void onBackPressed() = 44;
 
     /** Sets home rotation enabled. */
-    void setHomeRotationEnabled(boolean enabled) = 45;
+    oneway void setHomeRotationEnabled(boolean enabled) = 45;
+
+    /** Notifies when taskbar is enabled or disabled */
+    oneway void setTaskbarEnabled(boolean enabled) = 500;
 
     /** Notifies when taskbar is enabled or disabled */
     oneway void setTaskbarEnabled(boolean enabled) = 500;
@@ -116,17 +128,38 @@ interface ISystemUiProxy {
     /**
      * Notifies SystemUI to invoke IME Switcher.
      */
-    void onImeSwitcherPressed() = 49;
+    oneway void onImeSwitcherPressed() = 49;
 
     /**
      * Notifies to toggle notification panel.
      */
-    void toggleNotificationPanel() = 50;
+    oneway void toggleNotificationPanel() = 50;
 
     /**
      * Handle the screenshot request.
      */
-    void takeScreenshot(in ScreenshotRequest request) = 51;
+    oneway void takeScreenshot(in ScreenshotRequest request) = 51;
 
-    // Next id = 52
+    /**
+     * Dispatches trackpad status bar motion event to the notification shade. Currently these events
+     * are from the input monitor in {@link TouchInteractionService}. This is different from
+     * {@link #onStatusBarTouchEvent} above in that, this directly dispatches motion events to the
+     * notification shade, while {@link #onStatusBarTouchEvent} relies on setting the launcher
+     * window slippery to allow the frameworks to route those events after passing the initial
+     * threshold.
+     */
+    oneway void onStatusBarTrackpadEvent(in MotionEvent event) = 52;
+
+    /**
+     * Animate the nav bar being long-pressed.
+     *
+     * @param isTouchDown {@code true} if the button is starting to be pressed ({@code false} if
+     *                                released or canceled)
+     * @param shrink {@code true} if the handle should shrink, {@code false} if it should grow
+     * @param durationMs how long the animation should take (for the {@code isTouchDown} case, this
+     *                   should be the same as the amount of time to trigger a long-press)
+     */
+    oneway void animateNavBarLongPress(boolean isTouchDown, boolean shrink, long durationMs) = 54;
+
+    // Next id = 55
 }

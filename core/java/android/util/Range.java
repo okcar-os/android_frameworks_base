@@ -19,7 +19,8 @@ package android.util;
 import static com.android.internal.util.Preconditions.*;
 
 import android.annotation.Nullable;
-import android.hardware.camera2.utils.HashCodeHelpers;
+
+import java.util.Objects;
 
 /**
  * Immutable class for describing the range of two numeric values.
@@ -351,9 +352,9 @@ public final class Range<T extends Comparable<? super T>> {
      */
     @Override
     public int hashCode() {
-        return HashCodeHelpers.hashCodeGeneric(mLower, mUpper);
+        return Objects.hash(mLower, mUpper);
     }
 
     private final T mLower;
     private final T mUpper;
-};
+}

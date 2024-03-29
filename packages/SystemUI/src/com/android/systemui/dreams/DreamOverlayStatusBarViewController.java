@@ -32,10 +32,12 @@ import android.view.View;
 
 import androidx.annotation.Nullable;
 
-import com.android.systemui.R;
+import com.android.systemui.res.R;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.dreams.DreamOverlayStatusBarItemsProvider.StatusBarItem;
 import com.android.systemui.dreams.dagger.DreamOverlayComponent;
+import com.android.systemui.log.LogBuffer;
+import com.android.systemui.log.dagger.DreamLog;
 import com.android.systemui.settings.UserTracker;
 import com.android.systemui.statusbar.CrossFadeHelper;
 import com.android.systemui.statusbar.policy.IndividualSensorPrivacyController;
@@ -61,6 +63,8 @@ import javax.inject.Inject;
  */
 @DreamOverlayComponent.DreamOverlayScope
 public class DreamOverlayStatusBarViewController extends ViewController<DreamOverlayStatusBarView> {
+    private static final String TAG = "DreamStatusBarCtrl";
+
     private final ConnectivityManager mConnectivityManager;
     private final TouchInsetManager.TouchInsetSession mTouchInsetSession;
     private final NextAlarmController mNextAlarmController;
@@ -78,6 +82,7 @@ public class DreamOverlayStatusBarViewController extends ViewController<DreamOve
     private final Executor mMainExecutor;
     private final List<DreamOverlayStatusBarItemsProvider.StatusBarItem> mExtraStatusBarItems =
             new ArrayList<>();
+    private final DreamLogger mLogger;
 
     private boolean mIsAttached;
 
@@ -113,6 +118,7 @@ public class DreamOverlayStatusBarViewController extends ViewController<DreamOve
                     mEntryAnimationsFinished =
                             mDreamOverlayStateController.areEntryAnimationsFinished();
                     updateVisibility();
+                    updateAssistantAttentionIcon();
                 }
             };
 
@@ -156,7 +162,8 @@ public class DreamOverlayStatusBarViewController extends ViewController<DreamOve
             StatusBarWindowStateController statusBarWindowStateController,
             DreamOverlayStatusBarItemsProvider statusBarItemsProvider,
             DreamOverlayStateController dreamOverlayStateController,
-            UserTracker userTracker) {
+            UserTracker userTracker,
+            @DreamLog LogBuffer logBuffer) {
         super(view);
         mResources = resources;
         mMainExecutor = mainExecutor;
@@ -172,6 +179,7 @@ public class DreamOverlayStatusBarViewController extends ViewController<DreamOve
         mZenModeController = zenModeController;
         mDreamOverlayStateController = dreamOverlayStateController;
         mUserTracker = userTracker;
+        mLogger = new DreamLogger(logBuffer, TAG);
 
         // Register to receive show/hide updates for the system status bar. Our custom status bar
         // needs to hide when the system status bar is showing to ovoid overlapping status bars.
@@ -212,6 +220,7 @@ public class DreamOverlayStatusBarViewController extends ViewController<DreamOve
                 provider -> provider.removeCallback(mNotificationCountCallback));
         mStatusBarItemsProvider.removeCallback(mStatusBarItemsProviderCallback);
         mView.removeAllExtraStatusBarItemViews();
+        mDreamOverlayStateController.setDreamOverlayStatusBarVisible(false);
         mDreamOverlayStateController.removeCallback(mDreamOverlayStateCallback);
         mTouchInsetSession.clear();
 
@@ -269,12 +278,21 @@ public class DreamOverlayStatusBarViewController extends ViewController<DreamOve
                 hasAlarm ? buildAlarmContentDescription(alarm) : null);
     }
 
+    private void updateAssistantAttentionIcon() {
+        showIcon(DreamOverlayStatusBarView.STATUS_ICON_ASSISTANT_ATTENTION_ACTIVE,
+                mDreamOverlayStateController.hasAssistantAttention(),
+                R.string.assistant_attention_content_description);
+    }
+
     private void updateVisibility() {
-        if (shouldShowStatusBar()) {
-            mView.setVisibility(View.VISIBLE);
-        } else {
-            mView.setVisibility(View.INVISIBLE);
+        final int currentVisibility = mView.getVisibility();
+        final int newVisibility = shouldShowStatusBar() ? View.VISIBLE : View.INVISIBLE;
+        if (currentVisibility == newVisibility) {
+            return;
         }
+
+        mView.setVisibility(newVisibility);
+        mDreamOverlayStateController.setDreamOverlayStatusBarVisible(newVisibility == View.VISIBLE);
     }
 
     private String buildAlarmContentDescription(AlarmManager.AlarmClockInfo alarm) {
@@ -330,6 +348,8 @@ public class DreamOverlayStatusBarViewController extends ViewController<DreamOve
             @Nullable String contentDescription) {
         mMainExecutor.execute(() -> {
             if (mIsAttached) {
+                mLogger.logShowOrHideStatusBarItem(
+                        show, DreamOverlayStatusBarView.getLoggableStatusIconType(iconType));
                 mView.showIcon(iconType, show, contentDescription);
             }
         });

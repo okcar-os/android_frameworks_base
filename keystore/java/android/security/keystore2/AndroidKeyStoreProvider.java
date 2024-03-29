@@ -38,10 +38,12 @@ import java.security.PublicKey;
 import java.security.Security;
 import java.security.Signature;
 import java.security.UnrecoverableKeyException;
+import java.security.cert.X509Certificate;
 import java.security.interfaces.ECPublicKey;
 import java.security.interfaces.RSAPublicKey;
 
 import javax.crypto.Cipher;
+import javax.crypto.KeyAgreement;
 import javax.crypto.Mac;
 import javax.crypto.SecretKey;
 
@@ -180,6 +182,8 @@ public class AndroidKeyStoreProvider extends Provider {
             spi = ((Mac) cryptoPrimitive).getCurrentSpi();
         } else if (cryptoPrimitive instanceof Cipher) {
             spi = ((Cipher) cryptoPrimitive).getCurrentSpi();
+        } else if (cryptoPrimitive instanceof KeyAgreement) {
+            spi = ((KeyAgreement) cryptoPrimitive).getCurrentSpi();
         } else {
             throw new IllegalArgumentException("Unsupported crypto primitive: " + cryptoPrimitive
                     + ". Supported: Signature, Mac, Cipher");
@@ -221,7 +225,14 @@ public class AndroidKeyStoreProvider extends Provider {
         }
         final byte[] x509PublicCert = metadata.certificate;
 
-        PublicKey publicKey = AndroidKeyStoreSpi.toCertificate(x509PublicCert).getPublicKey();
+        final X509Certificate parsedX509Certificate =
+                AndroidKeyStoreSpi.toCertificate(x509PublicCert);
+        if (parsedX509Certificate == null) {
+            throw new UnrecoverableKeyException("Failed to parse the X.509 certificate containing"
+                   + " the public key. This likely indicates a hardware problem.");
+        }
+
+        PublicKey publicKey = parsedX509Certificate.getPublicKey();
 
         String jcaKeyAlgorithm = publicKey.getAlgorithm();
 

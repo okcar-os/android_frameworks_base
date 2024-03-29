@@ -34,6 +34,7 @@ import android.annotation.DrawableRes;
 import android.app.StatusBarManager;
 import android.content.Context;
 import android.content.res.Configuration;
+import android.database.ContentObserver;
 import android.graphics.Canvas;
 import android.graphics.Point;
 import android.graphics.Rect;
@@ -58,12 +59,11 @@ import android.widget.FrameLayout;
 
 import androidx.annotation.Nullable;
 
+import com.android.app.animation.Interpolators;
 import com.android.internal.annotations.VisibleForTesting;
 import com.android.settingslib.Utils;
 import com.android.systemui.Dependency;
 import com.android.systemui.Gefingerpoken;
-import com.android.systemui.R;
-import com.android.systemui.animation.Interpolators;
 import com.android.systemui.model.SysUiState;
 import com.android.systemui.navigationbar.buttons.ButtonDispatcher;
 import com.android.systemui.navigationbar.buttons.ContextualButton;
@@ -74,8 +74,9 @@ import com.android.systemui.navigationbar.buttons.NearestTouchFrame;
 import com.android.systemui.navigationbar.buttons.RotationContextButton;
 import com.android.systemui.navigationbar.gestural.EdgeBackGestureHandler;
 import com.android.systemui.recents.Recents;
+import com.android.systemui.res.R;
 import com.android.systemui.settings.DisplayTracker;
-import com.android.systemui.shade.NotificationPanelViewController;
+import com.android.systemui.shade.ShadeViewController;
 import com.android.systemui.shared.rotation.FloatingRotationButton;
 import com.android.systemui.shared.rotation.RotationButton.RotationButtonUpdatesCallback;
 import com.android.systemui.shared.rotation.RotationButtonController;
@@ -158,7 +159,7 @@ public class NavigationBarView extends FrameLayout implements TunerService.Tunab
     private NavigationBarInflaterView mNavigationInflaterView;
     private Optional<Recents> mRecentsOptional = Optional.empty();
     @Nullable
-    private NotificationPanelViewController mPanelView;
+    private ShadeViewController mPanelView;
     private RotationContextButton mRotationContextButton;
     private FloatingRotationButton mFloatingRotationButton;
     private RotationButtonController mRotationButtonController;
@@ -186,6 +187,7 @@ public class NavigationBarView extends FrameLayout implements TunerService.Tunab
     private boolean mShowSwipeUpUi;
     private UpdateActiveTouchRegionsCallback mUpdateActiveTouchRegionsCallback;
 
+    private final ContentObserver mShowCursorKeysObserver;
     private boolean mShowCursorKeys;
     private boolean mImeVisible;
 
@@ -342,6 +344,16 @@ public class NavigationBarView extends FrameLayout implements TunerService.Tunab
         mButtonDispatchers.put(R.id.dpad_left, cursorLeftButton);
         mButtonDispatchers.put(R.id.dpad_right, cursorRightButton);
         mDeadZone = new DeadZone(this);
+
+        mShowCursorKeysObserver = new ContentObserver(null) {
+            @Override
+            public void onChange(boolean selfChange) {
+                mShowCursorKeys = LineageSettings.System.getInt(
+                        mContext.getContentResolver(),
+                        LineageSettings.System.NAVIGATION_BAR_MENU_ARROW_KEYS, 0) != 0;
+                setNavigationIconHints(mNavigationIconHints);
+            }
+        };
     }
 
     public void setEdgeBackGestureHandler(EdgeBackGestureHandler edgeBackGestureHandler) {
@@ -364,7 +376,8 @@ public class NavigationBarView extends FrameLayout implements TunerService.Tunab
         mRecentsOptional = recentsOptional;
     }
 
-    public void setComponents(NotificationPanelViewController panel) {
+    /** */
+    public void setComponents(ShadeViewController panel) {
         mPanelView = panel;
         updatePanelSystemUiStateFlags();
     }
@@ -376,6 +389,7 @@ public class NavigationBarView extends FrameLayout implements TunerService.Tunab
 
     public void setBackgroundExecutor(Executor bgExecutor) {
         mBgExecutor = bgExecutor;
+        mRotationButtonController.setBgExecutor(bgExecutor);
     }
 
     public void setDisplayTracker(DisplayTracker displayTracker) {
@@ -520,14 +534,9 @@ public class NavigationBarView extends FrameLayout implements TunerService.Tunab
     }
 
     public KeyButtonDrawable getBackDrawable() {
-        KeyButtonDrawable drawable = getDrawable(getBackDrawableRes());
+        KeyButtonDrawable drawable = getDrawable(R.drawable.ic_sysbar_back);
         orientBackButton(drawable);
         return drawable;
-    }
-
-    public @DrawableRes int getBackDrawableRes() {
-        return chooseNavigationIconDrawableRes(R.drawable.ic_sysbar_back,
-                R.drawable.ic_sysbar_back_quick_step);
     }
 
     public KeyButtonDrawable getHomeDrawable() {
@@ -569,11 +578,6 @@ public class NavigationBarView extends FrameLayout implements TunerService.Tunab
         drawable.setRotation(mIsVertical ? 90 : 0);
     }
 
-    private @DrawableRes int chooseNavigationIconDrawableRes(@DrawableRes int icon,
-            @DrawableRes int quickStepIcon) {
-        return mShowSwipeUpUi ? quickStepIcon : icon;
-    }
-
     private KeyButtonDrawable getDrawable(@DrawableRes int icon) {
         return KeyButtonDrawable.create(mLightContext, mLightIconColor, mDarkIconColor, icon,
                 true /* hasShadow */, null /* ovalBackgroundColor */);
@@ -611,7 +615,6 @@ public class NavigationBarView extends FrameLayout implements TunerService.Tunab
             mTransitionListener.onBackAltCleared();
         }
         mImeVisible = visible;
-        mRotationButtonController.getRotationButton().setCanShowRotationButton(!visible);
     }
 
     void setDisabledFlags(int disabledFlags, SysUiState sysUiState) {
@@ -1134,8 +1137,11 @@ public class NavigationBarView extends FrameLayout implements TunerService.Tunab
         super.onAttachedToWindow();
         requestApplyInsets();
         reorient();
-        final TunerService tunerService = Dependency.get(TunerService.class);
-        tunerService.addTunable(this, NAVIGATION_BAR_MENU_ARROW_KEYS);
+
+        mContext.getContentResolver().registerContentObserver(LineageSettings.System.getUriFor(
+                        LineageSettings.System.NAVIGATION_BAR_MENU_ARROW_KEYS), false,
+                mShowCursorKeysObserver);
+        mShowCursorKeysObserver.onChange(true);
         if (mRotationButtonController != null) {
             mRotationButtonController.registerListeners(false /* registerRotationWatcher */);
         }
@@ -1146,6 +1152,7 @@ public class NavigationBarView extends FrameLayout implements TunerService.Tunab
     @Override
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
+        mContext.getContentResolver().unregisterContentObserver(mShowCursorKeysObserver);
         for (int i = 0; i < mButtonDispatchers.size(); ++i) {
             mButtonDispatchers.valueAt(i).onDestroy();
         }

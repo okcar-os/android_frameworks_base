@@ -33,7 +33,7 @@ import androidx.dynamicanimation.animation.FloatPropertyCompat
 import androidx.dynamicanimation.animation.SpringAnimation
 import androidx.dynamicanimation.animation.SpringForce
 import com.android.systemui.Dumpable
-import com.android.systemui.animation.Interpolators
+import com.android.app.animation.Interpolators
 import com.android.systemui.animation.ShadeInterpolation
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dump.DumpManager
@@ -46,7 +46,7 @@ import com.android.systemui.statusbar.phone.DozeParameters
 import com.android.systemui.statusbar.phone.ScrimController
 import com.android.systemui.statusbar.policy.ConfigurationController
 import com.android.systemui.statusbar.policy.KeyguardStateController
-import com.android.systemui.util.LargeScreenUtils
+import com.android.systemui.statusbar.policy.SplitShadeStateController
 import com.android.systemui.util.WallpaperController
 import java.io.PrintWriter
 import javax.inject.Inject
@@ -67,6 +67,7 @@ class NotificationShadeDepthController @Inject constructor(
     private val notificationShadeWindowController: NotificationShadeWindowController,
     private val dozeParameters: DozeParameters,
     private val context: Context,
+    private val splitShadeStateController: SplitShadeStateController,
     dumpManager: DumpManager,
     configurationController: ConfigurationController
 ) : ShadeExpansionListener, Dumpable {
@@ -189,12 +190,7 @@ class NotificationShadeDepthController @Inject constructor(
             scheduleUpdate()
         }
 
-    /**
-     * Callback that updates the window blur value and is called only once per frame.
-     */
-    @VisibleForTesting
-    val updateBlurCallback = Choreographer.FrameCallback {
-        updateScheduled = false
+    private fun computeBlurAndZoomOut(): Pair<Int, Float> {
         val animationRadius = MathUtils.constrain(shadeAnimation.radius,
                 blurUtils.minBlurRadius.toFloat(), blurUtils.maxBlurRadius.toFloat())
         val expansionRadius = blurUtils.blurRadiusOfRatio(
@@ -232,6 +228,16 @@ class NotificationShadeDepthController @Inject constructor(
         // Brightness slider removes blur, but doesn't affect zooms
         blur = (blur * (1f - brightnessMirrorSpring.ratio)).toInt()
 
+        return Pair(blur, zoomOut)
+    }
+
+    /**
+     * Callback that updates the window blur value and is called only once per frame.
+     */
+    @VisibleForTesting
+    val updateBlurCallback = Choreographer.FrameCallback {
+        updateScheduled = false
+        val (blur, zoomOut) = computeBlurAndZoomOut()
         val opaque = scrimsVisible && !blursDisabledForAppLaunch
         Trace.traceCounter(Trace.TRACE_TAG_APP, "shade_blur_radius", blur)
         blurUtils.applyBlur(root.viewRootImpl, blur, opaque)
@@ -267,7 +273,7 @@ class NotificationShadeDepthController @Inject constructor(
                             blurUtils.blurRadiusOfRatio(animation.animatedValue as Float)
                 }
                 addListener(object : AnimatorListenerAdapter() {
-                    override fun onAnimationEnd(animation: Animator?) {
+                    override fun onAnimationEnd(animation: Animator) {
                         keyguardAnimator = null
                         wakeAndUnlockBlurRadius = 0f
                     }
@@ -324,7 +330,7 @@ class NotificationShadeDepthController @Inject constructor(
     }
 
     private fun updateResources() {
-        inSplitShade = LargeScreenUtils.shouldUseSplitNotificationShade(context.resources)
+        inSplitShade = splitShadeStateController.shouldUseSplitNotificationShade(context.resources)
     }
 
     fun addListener(listener: DepthListener) {
@@ -441,6 +447,8 @@ class NotificationShadeDepthController @Inject constructor(
             return
         }
         updateScheduled = true
+        val (blur, _) = computeBlurAndZoomOut()
+        blurUtils.prepareBlur(root.viewRootImpl, blur)
         choreographer.postFrameCallback(updateBlurCallback)
     }
 
@@ -546,7 +554,6 @@ class NotificationShadeDepthController @Inject constructor(
          */
         fun onWallpaperZoomOutChanged(zoomOut: Float)
 
-        @JvmDefault
         fun onBlurRadiusChanged(blurRadius: Int) {}
     }
 }

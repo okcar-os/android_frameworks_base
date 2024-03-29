@@ -16,13 +16,16 @@
 
 package com.android.server.wm;
 
+import static android.os.StrictMode.setThreadPolicy;
+
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WITH_CLASS_NAME;
 import static com.android.server.wm.WindowManagerDebugConfig.TAG_WM;
 
 import android.annotation.NonNull;
 import android.annotation.Nullable;
-import android.content.Context;
 import android.os.Environment;
+import android.os.StrictMode;
+import android.os.StrictMode.ThreadPolicy;
 import android.util.AtomicFile;
 import android.util.Slog;
 
@@ -49,10 +52,8 @@ class LetterboxConfigurationPersister {
     private static final String TAG =
             TAG_WITH_CLASS_NAME ? "LetterboxConfigurationPersister" : TAG_WM;
 
-    @VisibleForTesting
-    static final String LETTERBOX_CONFIGURATION_FILENAME = "letterbox_config";
+    private static final String LETTERBOX_CONFIGURATION_FILENAME = "letterbox_config";
 
-    private final Context mContext;
     private final Supplier<Integer> mDefaultHorizontalReachabilitySupplier;
     private final Supplier<Integer> mDefaultVerticalReachabilitySupplier;
     private final Supplier<Integer> mDefaultBookModeReachabilitySupplier;
@@ -93,39 +94,35 @@ class LetterboxConfigurationPersister {
     @NonNull
     private final PersisterQueue mPersisterQueue;
 
-    LetterboxConfigurationPersister(Context systemUiContext,
-            Supplier<Integer> defaultHorizontalReachabilitySupplier,
-            Supplier<Integer> defaultVerticalReachabilitySupplier,
-            Supplier<Integer> defaultBookModeReachabilitySupplier,
-            Supplier<Integer> defaultTabletopModeReachabilitySupplier) {
-        this(systemUiContext, defaultHorizontalReachabilitySupplier,
-                defaultVerticalReachabilitySupplier,
-                defaultBookModeReachabilitySupplier,
-                defaultTabletopModeReachabilitySupplier,
+    LetterboxConfigurationPersister(
+            @NonNull Supplier<Integer> defaultHorizontalReachabilitySupplier,
+            @NonNull Supplier<Integer> defaultVerticalReachabilitySupplier,
+            @NonNull Supplier<Integer> defaultBookModeReachabilitySupplier,
+            @NonNull Supplier<Integer> defaultTabletopModeReachabilitySupplier) {
+        this(defaultHorizontalReachabilitySupplier, defaultVerticalReachabilitySupplier,
+                defaultBookModeReachabilitySupplier, defaultTabletopModeReachabilitySupplier,
                 Environment.getDataSystemDirectory(), new PersisterQueue(),
-                /* completionCallback */ null);
+                /* completionCallback */ null, LETTERBOX_CONFIGURATION_FILENAME);
     }
 
     @VisibleForTesting
-    LetterboxConfigurationPersister(Context systemUiContext,
-            Supplier<Integer> defaultHorizontalReachabilitySupplier,
-            Supplier<Integer> defaultVerticalReachabilitySupplier,
-            Supplier<Integer> defaultBookModeReachabilitySupplier,
-            Supplier<Integer> defaultTabletopModeReachabilitySupplier,
-            File configFolder,
-            PersisterQueue persisterQueue, @Nullable Consumer<String> completionCallback) {
-        mContext = systemUiContext.createDeviceProtectedStorageContext();
+    LetterboxConfigurationPersister(
+            @NonNull Supplier<Integer> defaultHorizontalReachabilitySupplier,
+            @NonNull Supplier<Integer> defaultVerticalReachabilitySupplier,
+            @NonNull Supplier<Integer> defaultBookModeReachabilitySupplier,
+            @NonNull Supplier<Integer> defaultTabletopModeReachabilitySupplier,
+            @NonNull File configFolder, @NonNull PersisterQueue persisterQueue,
+            @Nullable Consumer<String> completionCallback,
+            @NonNull String letterboxConfigurationFileName) {
         mDefaultHorizontalReachabilitySupplier = defaultHorizontalReachabilitySupplier;
         mDefaultVerticalReachabilitySupplier = defaultVerticalReachabilitySupplier;
-        mDefaultBookModeReachabilitySupplier =
-                defaultBookModeReachabilitySupplier;
-        mDefaultTabletopModeReachabilitySupplier =
-                defaultTabletopModeReachabilitySupplier;
+        mDefaultBookModeReachabilitySupplier = defaultBookModeReachabilitySupplier;
+        mDefaultTabletopModeReachabilitySupplier = defaultTabletopModeReachabilitySupplier;
         mCompletionCallback = completionCallback;
-        final File prefFiles = new File(configFolder, LETTERBOX_CONFIGURATION_FILENAME);
+        final File prefFiles = new File(configFolder, letterboxConfigurationFileName);
         mConfigurationFile = new AtomicFile(prefFiles);
         mPersisterQueue = persisterQueue;
-        readCurrentConfiguration();
+        runWithDiskReadsThreadPolicy(this::readCurrentConfiguration);
     }
 
     /**
@@ -273,6 +270,20 @@ class LetterboxConfigurationPersister {
         } finally {
             outputStream.close();
         }
+    }
+
+    // The LetterboxConfigurationDeviceConfig needs to access the
+    // file with the current reachability position once when the
+    // device boots. Because DisplayThread uses allowIo=false
+    // accessing a file triggers a DiskReadViolation.
+    // Here we use StrictMode to allow the current thread to read
+    // the AtomicFile once in the current thread restoring the
+    // original ThreadPolicy after that.
+    private void runWithDiskReadsThreadPolicy(Runnable runnable) {
+        final ThreadPolicy currentPolicy = StrictMode.getThreadPolicy();
+        setThreadPolicy(new ThreadPolicy.Builder().permitDiskReads().build());
+        runnable.run();
+        setThreadPolicy(currentPolicy);
     }
 
     private static class UpdateValuesCommand implements

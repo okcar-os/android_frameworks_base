@@ -19,7 +19,7 @@ import android.testing.AndroidTestingRunner
 import android.testing.TestableLooper.RunWithLooper
 import android.widget.ImageView
 import androidx.test.filters.SmallTest
-import com.android.systemui.R
+import com.android.systemui.res.R
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.battery.BatteryMeterView.BatteryEstimateFetcher
 import com.android.systemui.statusbar.policy.BatteryController.EstimateFetchCompletion
@@ -85,9 +85,9 @@ class BatteryMeterViewTest : SysuiTestCase() {
     }
 
     @Test
-    fun contentDescription_estimateAndOverheated() {
+    fun contentDescription_estimateAndBatteryDefender() {
         mBatteryMeterView.onBatteryLevelChanged(17, false)
-        mBatteryMeterView.onIsOverheatedChanged(true)
+        mBatteryMeterView.onIsBatteryDefenderChanged(true)
         mBatteryMeterView.setPercentShowMode(BatteryMeterView.MODE_ESTIMATE)
         mBatteryMeterView.setBatteryEstimateFetcher(Fetcher())
 
@@ -103,9 +103,9 @@ class BatteryMeterViewTest : SysuiTestCase() {
     }
 
     @Test
-    fun contentDescription_overheated() {
+    fun contentDescription_batteryDefender() {
         mBatteryMeterView.onBatteryLevelChanged(90, false)
-        mBatteryMeterView.onIsOverheatedChanged(true)
+        mBatteryMeterView.onIsBatteryDefenderChanged(true)
 
         assertThat(mBatteryMeterView.contentDescription).isEqualTo(
                 context.getString(R.string.accessibility_battery_level_charging_paused, 90)
@@ -124,6 +124,16 @@ class BatteryMeterViewTest : SysuiTestCase() {
     @Test
     fun contentDescription_notCharging() {
         mBatteryMeterView.onBatteryLevelChanged(45, false)
+
+        assertThat(mBatteryMeterView.contentDescription).isEqualTo(
+                context.getString(R.string.accessibility_battery_level, 45)
+        )
+    }
+
+    @Test
+    fun contentDescription_isIncompatibleCharging_notCharging() {
+        mBatteryMeterView.onBatteryLevelChanged(45, true)
+        mBatteryMeterView.onIsIncompatibleChargingChanged(true)
 
         assertThat(mBatteryMeterView.contentDescription).isEqualTo(
                 context.getString(R.string.accessibility_battery_level, 45)
@@ -155,14 +165,14 @@ class BatteryMeterViewTest : SysuiTestCase() {
 
     @Test
     fun contentDescription_manyUpdates_alwaysUpdated() {
-        // Overheated
+        // BatteryDefender
         mBatteryMeterView.onBatteryLevelChanged(90, false)
-        mBatteryMeterView.onIsOverheatedChanged(true)
+        mBatteryMeterView.onIsBatteryDefenderChanged(true)
         assertThat(mBatteryMeterView.contentDescription).isEqualTo(
                 context.getString(R.string.accessibility_battery_level_charging_paused, 90)
         )
 
-        // Overheated & estimate
+        // BatteryDefender & estimate
         mBatteryMeterView.setPercentShowMode(BatteryMeterView.MODE_ESTIMATE)
         mBatteryMeterView.setBatteryEstimateFetcher(Fetcher())
         mBatteryMeterView.updatePercentText()
@@ -175,7 +185,7 @@ class BatteryMeterViewTest : SysuiTestCase() {
         )
 
         // Just estimate
-        mBatteryMeterView.onIsOverheatedChanged(false)
+        mBatteryMeterView.onIsBatteryDefenderChanged(false)
         assertThat(mBatteryMeterView.contentDescription).isEqualTo(
                 context.getString(
                         R.string.accessibility_battery_level_with_estimate,
@@ -198,37 +208,57 @@ class BatteryMeterViewTest : SysuiTestCase() {
     }
 
     @Test
-    fun isOverheatedChanged_true_drawableGetsTrue() {
+    fun isBatteryDefenderChanged_true_drawableGetsTrue() {
         mBatteryMeterView.setDisplayShieldEnabled(true)
         val drawable = getBatteryDrawable()
 
-        mBatteryMeterView.onIsOverheatedChanged(true)
+        mBatteryMeterView.onIsBatteryDefenderChanged(true)
 
         assertThat(drawable.displayShield).isTrue()
     }
 
     @Test
-    fun isOverheatedChanged_false_drawableGetsFalse() {
+    fun isBatteryDefenderChanged_false_drawableGetsFalse() {
         mBatteryMeterView.setDisplayShieldEnabled(true)
         val drawable = getBatteryDrawable()
 
         // Start as true
-        mBatteryMeterView.onIsOverheatedChanged(true)
+        mBatteryMeterView.onIsBatteryDefenderChanged(true)
 
         // Update to false
-        mBatteryMeterView.onIsOverheatedChanged(false)
+        mBatteryMeterView.onIsBatteryDefenderChanged(false)
 
         assertThat(drawable.displayShield).isFalse()
     }
 
     @Test
-    fun isOverheatedChanged_true_featureflagOff_drawableGetsFalse() {
+    fun isBatteryDefenderChanged_true_featureflagOff_drawableGetsFalse() {
         mBatteryMeterView.setDisplayShieldEnabled(false)
         val drawable = getBatteryDrawable()
 
-        mBatteryMeterView.onIsOverheatedChanged(true)
+        mBatteryMeterView.onIsBatteryDefenderChanged(true)
 
         assertThat(drawable.displayShield).isFalse()
+    }
+
+    @Test
+    fun isIncompatibleChargingChanged_true_drawableGetsChargingFalse() {
+        mBatteryMeterView.onBatteryLevelChanged(45, true)
+        val drawable = getBatteryDrawable()
+
+        mBatteryMeterView.onIsIncompatibleChargingChanged(true)
+
+        assertThat(drawable.getCharging()).isFalse()
+    }
+
+    @Test
+    fun isIncompatibleChargingChanged_false_drawableGetsChargingTrue() {
+        mBatteryMeterView.onBatteryLevelChanged(45, true)
+        val drawable = getBatteryDrawable()
+
+        mBatteryMeterView.onIsIncompatibleChargingChanged(false)
+
+        assertThat(drawable.getCharging()).isTrue()
     }
 
     private fun getBatteryDrawable(): AccessorizedBatteryDrawable {
@@ -237,8 +267,7 @@ class BatteryMeterViewTest : SysuiTestCase() {
     }
 
     private class Fetcher : BatteryEstimateFetcher {
-        override fun fetchBatteryTimeRemainingEstimate(
-                completion: EstimateFetchCompletion) {
+        override fun fetchBatteryTimeRemainingEstimate(completion: EstimateFetchCompletion) {
             completion.onBatteryRemainingEstimateRetrieved(ESTIMATE)
         }
     }

@@ -19,7 +19,8 @@ package com.android.systemui.shared.clocks
 import android.testing.AndroidTestingRunner
 import android.view.LayoutInflater
 import androidx.test.filters.SmallTest
-import com.android.systemui.R
+import com.android.app.animation.Interpolators
+import com.android.systemui.customization.R
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.animation.TextAnimator
 import com.android.systemui.util.mockito.any
@@ -64,8 +65,8 @@ class AnimatableClockViewTest : SysuiTestCase() {
                 color = 200,
                 strokeWidth = -1F,
                 animate = false,
-                duration = 350L,
-                interpolator = null,
+                duration = 833L,
+                interpolator = Interpolators.EMPHASIZED_DECELERATE,
                 delay = 0L,
                 onAnimationEnd = null
             )
@@ -98,8 +99,8 @@ class AnimatableClockViewTest : SysuiTestCase() {
                 color = 200,
                 strokeWidth = -1F,
                 animate = true,
-                duration = 350L,
-                interpolator = null,
+                duration = 833L,
+                interpolator = Interpolators.EMPHASIZED_DECELERATE,
                 delay = 0L,
                 onAnimationEnd = null
             )

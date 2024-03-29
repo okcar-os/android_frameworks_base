@@ -24,7 +24,7 @@ import android.annotation.RequiresPermission;
 import android.annotation.SuppressLint;
 import android.annotation.TestApi;
 import android.app.ActivityManager;
-import android.app.TaskInfo.CameraCompatControlState;
+import android.app.AppCompatTaskInfo.CameraCompatControlState;
 import android.os.IBinder;
 import android.os.RemoteException;
 import android.view.SurfaceControl;
@@ -92,13 +92,10 @@ public class TaskOrganizer extends WindowOrganizer {
      * has create a starting window for the Task.
      *
      * @param info The information about the Task that's available
-     * @param appToken Token of the application being started.
-     *        context to for resources
      * @hide
      */
     @BinderThread
-    public void addStartingWindow(@NonNull StartingWindowInfo info,
-            @NonNull IBinder appToken) {}
+    public void addStartingWindow(@NonNull StartingWindowInfo info) {}
 
     /**
      * Called when the Task want to remove the starting window.
@@ -269,31 +266,6 @@ public class TaskOrganizer extends WindowOrganizer {
     }
 
     /**
-     * Controls whether ignore orientation request logic in {@link
-     * com.android.server.wm.DisplayArea} is disabled at runtime and how to optionally map some
-     * requested orientation to others.
-     *
-     * @param isIgnoreOrientationRequestDisabled when {@code true}, the system always ignores the
-     *           value of  {@link com.android.server.wm.DisplayArea#getIgnoreOrientationRequest}
-     *           and app requested orientation is respected.
-     * @param fromOrientations The orientations we want to map to the correspondent orientations
-     *                        in toOrientation.
-     * @param toOrientations The orientations we map to the ones in fromOrientations at the same
-     *                       index
-     * @hide
-     */
-    @RequiresPermission(android.Manifest.permission.MANAGE_ACTIVITY_TASKS)
-    public void setOrientationRequestPolicy(boolean isIgnoreOrientationRequestDisabled,
-            @Nullable int[] fromOrientations, @Nullable int[] toOrientations) {
-        try {
-            mTaskOrganizerController.setOrientationRequestPolicy(isIgnoreOrientationRequestDisabled,
-                    fromOrientations, toOrientations);
-        } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
-        }
-    }
-
-    /**
      * Gets the executor to run callbacks on.
      * @hide
      */
@@ -304,9 +276,8 @@ public class TaskOrganizer extends WindowOrganizer {
 
     private final ITaskOrganizer mInterface = new ITaskOrganizer.Stub() {
         @Override
-        public void addStartingWindow(StartingWindowInfo windowInfo,
-                IBinder appToken) {
-            mExecutor.execute(() -> TaskOrganizer.this.addStartingWindow(windowInfo, appToken));
+        public void addStartingWindow(StartingWindowInfo windowInfo) {
+            mExecutor.execute(() -> TaskOrganizer.this.addStartingWindow(windowInfo));
         }
 
         @Override

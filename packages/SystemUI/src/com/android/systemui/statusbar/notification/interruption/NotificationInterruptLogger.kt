@@ -16,13 +16,16 @@
 
 package com.android.systemui.statusbar.notification.interruption
 
+import android.util.Log
+
 import com.android.systemui.log.dagger.NotificationInterruptLog
-import com.android.systemui.plugins.log.LogBuffer
-import com.android.systemui.plugins.log.LogLevel.DEBUG
-import com.android.systemui.plugins.log.LogLevel.INFO
-import com.android.systemui.plugins.log.LogLevel.WARNING
+import com.android.systemui.log.LogBuffer
+import com.android.systemui.log.core.LogLevel.DEBUG
+import com.android.systemui.log.core.LogLevel.INFO
+import com.android.systemui.log.core.LogLevel.WARNING
 import com.android.systemui.statusbar.notification.collection.NotificationEntry
 import com.android.systemui.statusbar.notification.logKey
+import com.android.systemui.util.Compile
 import javax.inject.Inject
 
 class NotificationInterruptLogger @Inject constructor(
@@ -44,10 +47,20 @@ class NotificationInterruptLogger @Inject constructor(
     }
 
     fun logNoBubbleNotAllowed(entry: NotificationEntry) {
+        if (Compile.IS_DEBUG && Log.isLoggable(TAG, Log.DEBUG)) {
+            buffer.log(TAG, DEBUG, {
+                str1 = entry.logKey
+            }, {
+                "No bubble up: not allowed to bubble: $str1"
+            })
+        }
+    }
+
+    fun logSuspendedAppBubble(entry: NotificationEntry) {
         buffer.log(TAG, DEBUG, {
             str1 = entry.logKey
         }, {
-            "No bubble up: not allowed to bubble: $str1"
+            "No bubble up: notification: app $str1 is suspended"
         })
     }
 
@@ -234,6 +247,14 @@ class NotificationInterruptLogger @Inject constructor(
         })
     }
 
+    fun logNoPulsingNotificationHiddenOverride(entry: NotificationEntry) {
+        buffer.log(TAG, DEBUG, {
+            str1 = entry.logKey
+        }, {
+            "No pulsing: notification hidden on lock screen by override: $str1"
+        })
+    }
+
     fun logNoPulsingNotImportant(entry: NotificationEntry) {
         buffer.log(TAG, DEBUG, {
             str1 = entry.logKey
@@ -277,11 +298,11 @@ class NotificationInterruptLogger @Inject constructor(
         })
     }
 
-    fun keyguardHideNotification(entry: NotificationEntry) {
+    fun logNoAlertingNotificationHidden(entry: NotificationEntry) {
         buffer.log(TAG, DEBUG, {
             str1 = entry.logKey
         }, {
-            "Keyguard Hide Notification: $str1"
+            "No alerting: notification hidden on lock screen: $str1"
         })
     }
 }

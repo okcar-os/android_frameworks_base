@@ -18,6 +18,7 @@ package com.android.wm.shell.windowdecor;
 
 import android.app.ActivityManager.RunningTaskInfo;
 import android.app.WindowConfiguration;
+import android.app.WindowConfiguration.WindowingMode;
 import android.content.Context;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
@@ -64,7 +65,8 @@ public class CaptionWindowDecoration extends WindowDecoration<WindowDecorLinearL
             Handler handler,
             Choreographer choreographer,
             SyncTransactionQueue syncQueue) {
-        super(context, displayController, taskOrganizer, taskInfo, taskSurface);
+        super(context, displayController, taskOrganizer, taskInfo, taskSurface,
+                taskInfo.getConfiguration());
 
         mHandler = handler;
         mChoreographer = choreographer;
@@ -90,15 +92,15 @@ public class CaptionWindowDecoration extends WindowDecoration<WindowDecorLinearL
     @Override
     void relayout(RunningTaskInfo taskInfo) {
         final SurfaceControl.Transaction t = new SurfaceControl.Transaction();
-        relayout(taskInfo, t, t);
-        mSyncQueue.runInSync(transaction -> {
-            transaction.merge(t);
-            t.close();
-        });
+        // Use |applyStartTransactionOnDraw| so that the transaction (that applies task crop) is
+        // synced with the buffer transaction (that draws the View). Both will be shown on screen
+        // at the same, whereas applying them independently causes flickering. See b/270202228.
+        relayout(taskInfo, t, t, true /* applyStartTransactionOnDraw */);
     }
 
     void relayout(RunningTaskInfo taskInfo,
-            SurfaceControl.Transaction startT, SurfaceControl.Transaction finishT) {
+            SurfaceControl.Transaction startT, SurfaceControl.Transaction finishT,
+            boolean applyStartTransactionOnDraw) {
         final int shadowRadiusID = taskInfo.isFocused
                 ? R.dimen.freeform_decor_shadow_focused_thickness
                 : R.dimen.freeform_decor_shadow_unfocused_thickness;
@@ -110,19 +112,12 @@ public class CaptionWindowDecoration extends WindowDecoration<WindowDecorLinearL
         final SurfaceControl oldDecorationSurface = mDecorationContainerSurface;
         final WindowContainerTransaction wct = new WindowContainerTransaction();
 
-        final int outsetLeftId = R.dimen.freeform_resize_handle;
-        final int outsetTopId = R.dimen.freeform_resize_handle;
-        final int outsetRightId = R.dimen.freeform_resize_handle;
-        final int outsetBottomId = R.dimen.freeform_resize_handle;
-
         mRelayoutParams.reset();
         mRelayoutParams.mRunningTaskInfo = taskInfo;
         mRelayoutParams.mLayoutResId = R.layout.caption_window_decor;
-        mRelayoutParams.mCaptionHeightId = R.dimen.freeform_decor_caption_height;
+        mRelayoutParams.mCaptionHeightId = getCaptionHeightId(taskInfo.getWindowingMode());
         mRelayoutParams.mShadowRadiusId = shadowRadiusID;
-        if (isDragResizeable) {
-            mRelayoutParams.setOutsets(outsetLeftId, outsetTopId, outsetRightId, outsetBottomId);
-        }
+        mRelayoutParams.mApplyStartTransactionOnDraw = applyStartTransactionOnDraw;
 
         relayout(mRelayoutParams, startT, finishT, wct, oldRootView, mResult);
         // After this line, mTaskInfo is up-to-date and should be used instead of taskInfo
@@ -150,8 +145,12 @@ public class CaptionWindowDecoration extends WindowDecoration<WindowDecorLinearL
                     mHandler,
                     mChoreographer,
                     mDisplay.getDisplayId(),
+                    0 /* taskCornerRadius */,
                     mDecorationContainerSurface,
-                    mDragPositioningCallback);
+                    mDragPositioningCallback,
+                    mSurfaceControlBuilderSupplier,
+                    mSurfaceControlTransactionSupplier,
+                    mDisplayController);
         }
 
         final int touchSlop = ViewConfiguration.get(mResult.mRootView.getContext())
@@ -227,5 +226,15 @@ public class CaptionWindowDecoration extends WindowDecoration<WindowDecorLinearL
     public void close() {
         closeDragResizeListener();
         super.close();
+    }
+
+    @Override
+    int getCaptionHeightId(@WindowingMode int windowingMode) {
+        return R.dimen.freeform_decor_caption_height;
+    }
+
+    @Override
+    int getCaptionViewId() {
+        return R.id.caption;
     }
 }

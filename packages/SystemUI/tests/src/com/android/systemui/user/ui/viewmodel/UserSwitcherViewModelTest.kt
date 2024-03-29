@@ -28,13 +28,12 @@ import com.android.systemui.GuestResetOrExitSessionReceiver
 import com.android.systemui.GuestResumeSessionReceiver
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.common.shared.model.Text
+import com.android.systemui.coroutines.collectLastValue
 import com.android.systemui.flags.FakeFeatureFlags
 import com.android.systemui.flags.Flags
-import com.android.systemui.keyguard.data.repository.FakeKeyguardBouncerRepository
 import com.android.systemui.keyguard.data.repository.FakeKeyguardRepository
-import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
+import com.android.systemui.keyguard.domain.interactor.KeyguardInteractorFactory
 import com.android.systemui.plugins.ActivityStarter
-import com.android.systemui.statusbar.CommandQueue
 import com.android.systemui.statusbar.policy.DeviceProvisionedController
 import com.android.systemui.telephony.data.repository.FakeTelephonyRepository
 import com.android.systemui.telephony.domain.interactor.TelephonyInteractor
@@ -43,10 +42,11 @@ import com.android.systemui.user.data.repository.FakeUserRepository
 import com.android.systemui.user.domain.interactor.GuestUserInteractor
 import com.android.systemui.user.domain.interactor.HeadlessSystemUserMode
 import com.android.systemui.user.domain.interactor.RefreshUsersScheduler
-import com.android.systemui.user.domain.interactor.UserInteractor
+import com.android.systemui.user.domain.interactor.UserSwitcherInteractor
 import com.android.systemui.user.legacyhelper.ui.LegacyUserUiHelper
 import com.android.systemui.user.shared.model.UserActionModel
 import com.android.systemui.util.mockito.any
+import com.android.systemui.util.mockito.mock
 import com.android.systemui.util.mockito.whenever
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -79,7 +79,6 @@ class UserSwitcherViewModelTest : SysuiTestCase() {
     @Mock private lateinit var uiEventLogger: UiEventLogger
     @Mock private lateinit var resumeSessionReceiver: GuestResumeSessionReceiver
     @Mock private lateinit var resetOrExitSessionReceiver: GuestResetOrExitSessionReceiver
-    @Mock private lateinit var commandQueue: CommandQueue
     @Mock private lateinit var keyguardUpdateMonitor: KeyguardUpdateMonitor
 
     private lateinit var underTest: UserSwitcherViewModel
@@ -105,6 +104,20 @@ class UserSwitcherViewModelTest : SysuiTestCase() {
         testScope = TestScope(testDispatcher)
         userRepository = FakeUserRepository()
         runBlocking {
+            val userInfos =
+                listOf(
+                    UserInfo(
+                        /* id= */ 0,
+                        /* name= */ "zero",
+                        /* iconPath= */ "",
+                        /* flags= */ UserInfo.FLAG_PRIMARY or
+                            UserInfo.FLAG_ADMIN or
+                            UserInfo.FLAG_FULL,
+                        UserManager.USER_TYPE_FULL_SYSTEM,
+                    ),
+                )
+            userRepository.setUserInfos(userInfos)
+            userRepository.setSelectedUserInfo(userInfos[0])
             userRepository.setSettings(
                 UserSwitcherSettingsModel(
                     isUserSwitcherEnabled = true,
@@ -112,7 +125,6 @@ class UserSwitcherViewModelTest : SysuiTestCase() {
             )
         }
 
-        keyguardRepository = FakeKeyguardRepository()
         val refreshUsersScheduler =
             RefreshUsersScheduler(
                 applicationScope = testScope.backgroundScope,
@@ -135,42 +147,37 @@ class UserSwitcherViewModelTest : SysuiTestCase() {
                 resetOrExitSessionReceiver = resetOrExitSessionReceiver,
             )
 
-        val featureFlags =
-            FakeFeatureFlags().apply {
-                set(Flags.FULL_SCREEN_USER_SWITCHER, false)
-                set(Flags.FACE_AUTH_REFACTOR, true)
-            }
+        val featureFlags = FakeFeatureFlags().apply { set(Flags.FULL_SCREEN_USER_SWITCHER, false) }
+        val reply = KeyguardInteractorFactory.create(featureFlags = featureFlags)
+        keyguardRepository = reply.repository
+
         underTest =
             UserSwitcherViewModel(
-                    userInteractor =
-                        UserInteractor(
-                            applicationContext = context,
-                            repository = userRepository,
-                            activityStarter = activityStarter,
-                            keyguardInteractor =
-                                KeyguardInteractor(
-                                    repository = keyguardRepository,
-                                    commandQueue = commandQueue,
-                                    featureFlags = featureFlags,
-                                    bouncerRepository = FakeKeyguardBouncerRepository(),
-                                ),
-                            featureFlags = featureFlags,
-                            manager = manager,
-                            headlessSystemUserMode = headlessSystemUserMode,
-                            applicationScope = testScope.backgroundScope,
-                            telephonyInteractor =
-                                TelephonyInteractor(
-                                    repository = FakeTelephonyRepository(),
-                                ),
-                            broadcastDispatcher = fakeBroadcastDispatcher,
-                            keyguardUpdateMonitor = keyguardUpdateMonitor,
-                            backgroundDispatcher = testDispatcher,
-                            activityManager = activityManager,
-                            refreshUsersScheduler = refreshUsersScheduler,
-                            guestUserInteractor = guestUserInteractor,
-                        ),
-                    guestUserInteractor = guestUserInteractor,
-                )
+                userSwitcherInteractor =
+                    UserSwitcherInteractor(
+                        applicationContext = context,
+                        repository = userRepository,
+                        activityStarter = activityStarter,
+                        keyguardInteractor = reply.keyguardInteractor,
+                        featureFlags = featureFlags,
+                        manager = manager,
+                        headlessSystemUserMode = headlessSystemUserMode,
+                        applicationScope = testScope.backgroundScope,
+                        telephonyInteractor =
+                            TelephonyInteractor(
+                                repository = FakeTelephonyRepository(),
+                            ),
+                        broadcastDispatcher = fakeBroadcastDispatcher,
+                        keyguardUpdateMonitor = keyguardUpdateMonitor,
+                        backgroundDispatcher = testDispatcher,
+                        activityManager = activityManager,
+                        refreshUsersScheduler = refreshUsersScheduler,
+                        guestUserInteractor = guestUserInteractor,
+                        uiEventLogger = uiEventLogger,
+                        userRestrictionChecker = mock(),
+                    ),
+                guestUserInteractor = guestUserInteractor,
+            )
     }
 
     @Test
@@ -231,7 +238,7 @@ class UserSwitcherViewModelTest : SysuiTestCase() {
         }
 
     @Test
-    fun `maximumUserColumns - few users`() =
+    fun maximumUserColumns_fewUsers() =
         testScope.runTest {
             setUsers(count = 2)
             val values = mutableListOf<Int>()
@@ -243,7 +250,7 @@ class UserSwitcherViewModelTest : SysuiTestCase() {
         }
 
     @Test
-    fun `maximumUserColumns - many users`() =
+    fun maximumUserColumns_manyUsers() =
         testScope.runTest {
             setUsers(count = 5)
             val values = mutableListOf<Int>()
@@ -254,7 +261,7 @@ class UserSwitcherViewModelTest : SysuiTestCase() {
         }
 
     @Test
-    fun `isOpenMenuButtonVisible - has actions - true`() =
+    fun isOpenMenuButtonVisible_hasActions_true() =
         testScope.runTest {
             setUsers(2)
 
@@ -266,7 +273,7 @@ class UserSwitcherViewModelTest : SysuiTestCase() {
         }
 
     @Test
-    fun `isOpenMenuButtonVisible - no actions - false`() =
+    fun isOpenMenuButtonVisible_noActions_false() =
         testScope.runTest {
             val userInfos = setUsers(2)
             userRepository.setSelectedUserInfo(userInfos[1])
@@ -297,7 +304,7 @@ class UserSwitcherViewModelTest : SysuiTestCase() {
         }
 
     @Test
-    fun `menu actions`() =
+    fun menuActions() =
         testScope.runTest {
             setUsers(2)
             val actions = mutableListOf<List<UserActionViewModel>>()
@@ -317,12 +324,12 @@ class UserSwitcherViewModelTest : SysuiTestCase() {
         }
 
     @Test
-    fun `isFinishRequested - finishes when cancel button is clicked`() =
+    fun isFinishRequested_finishesWhenCancelButtonIsClicked() =
         testScope.runTest {
             setUsers(count = 2)
             val isFinishRequested = mutableListOf<Boolean>()
             val job =
-                    launch(testDispatcher) { underTest.isFinishRequested.toList(isFinishRequested) }
+                launch(testDispatcher) { underTest.isFinishRequested.toList(isFinishRequested) }
             assertThat(isFinishRequested.last()).isFalse()
 
             underTest.onCancelButtonClicked()
@@ -337,7 +344,25 @@ class UserSwitcherViewModelTest : SysuiTestCase() {
         }
 
     @Test
-    fun `guest selected -- name is exit guest`() =
+    fun isFinishRequested_finishesWhenUserButtonIsClicked() =
+        testScope.runTest {
+            setUsers(count = 2)
+            val isFinishRequested = mutableListOf<Boolean>()
+            val job =
+                launch(testDispatcher) { underTest.isFinishRequested.toList(isFinishRequested) }
+
+            val userViewModels = collectLastValue(underTest.users)
+            assertThat(isFinishRequested.last()).isFalse()
+
+            userViewModels.invoke()?.firstOrNull()?.onClicked?.invoke()
+
+            assertThat(isFinishRequested.last()).isTrue()
+
+            job.cancel()
+        }
+
+    @Test
+    fun guestSelected_nameIsExitGuest() =
         testScope.runTest {
             val userInfos =
                 listOf(
@@ -385,7 +410,7 @@ class UserSwitcherViewModelTest : SysuiTestCase() {
         }
 
     @Test
-    fun `guest not selected -- name is guest`() =
+    fun guestNotSelected_nameIsGuest() =
         testScope.runTest {
             val userInfos =
                 listOf(

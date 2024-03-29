@@ -35,7 +35,7 @@ import androidx.activity.ComponentActivity
 import androidx.annotation.VisibleForTesting
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import com.android.systemui.R
+import com.android.systemui.res.R
 import com.android.systemui.controls.ControlsServiceInfo
 import com.android.systemui.controls.controller.ControlsController
 import com.android.systemui.controls.panels.AuthorizedPanelsRepository
@@ -91,7 +91,7 @@ open class ControlsProviderSelectorActivity @Inject constructor(
 
         setContentView(R.layout.controls_management)
 
-        getLifecycle().addObserver(
+        lifecycle.addObserver(
             ControlsAnimations.observerForAnimations(
                 requireViewById<ViewGroup>(R.id.controls_management_root),
                 window,
@@ -189,7 +189,7 @@ open class ControlsProviderSelectorActivity @Inject constructor(
                     authorizedPanelsRepository.addAuthorizedPanels(
                             setOf(serviceInfo.componentName.packageName)
                     )
-                    val selected = SelectedItem.PanelItem(appName, componentName)
+                    val selected = SelectedItem.PanelItem(appName, serviceInfo.componentName)
                     controlsController.setPreferredSelection(selected)
                     animateExitAndFinish()
                     openControlsOrigin()
@@ -211,7 +211,10 @@ open class ControlsProviderSelectorActivity @Inject constructor(
                     putExtra(ControlsFavoritingActivity.EXTRA_APP,
                             listingController.getAppLabel(it))
                     putExtra(Intent.EXTRA_COMPONENT_NAME, it)
-                    putExtra(ControlsFavoritingActivity.EXTRA_FROM_PROVIDER_SELECTOR, true)
+                    putExtra(
+                        ControlsFavoritingActivity.EXTRA_SOURCE,
+                        ControlsFavoritingActivity.EXTRA_SOURCE_VALUE_FROM_PROVIDER_SELECTOR,
+                    )
                 }
                 startActivity(intent, ActivityOptions.makeSceneTransitionAnimation(this).toBundle())
             }

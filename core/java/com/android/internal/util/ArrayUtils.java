@@ -21,10 +21,9 @@ import android.annotation.Nullable;
 import android.compat.annotation.UnsupportedAppUsage;
 import android.os.Build;
 import android.util.ArraySet;
+import android.util.EmptyArray;
 
 import dalvik.system.VMRuntime;
-
-import libcore.util.EmptyArray;
 
 import java.io.File;
 import java.lang.reflect.Array;
@@ -39,9 +38,9 @@ import java.util.Set;
 import java.util.function.IntFunction;
 
 /**
- * ArrayUtils contains some methods that you can call to find out
- * the most efficient increments by which to grow arrays.
+ * Static utility methods for arrays that aren't already included in {@link java.util.Arrays}.
  */
+@android.ravenwood.annotation.RavenwoodKeepWholeClass
 public class ArrayUtils {
     private static final int CACHE_SIZE = 73;
     private static Object[] sCache = new Object[CACHE_SIZE];
@@ -50,39 +49,79 @@ public class ArrayUtils {
 
     private ArrayUtils() { /* cannot be instantiated */ }
 
+    @android.ravenwood.annotation.RavenwoodReplace
     public static byte[] newUnpaddedByteArray(int minLen) {
         return (byte[])VMRuntime.getRuntime().newUnpaddedArray(byte.class, minLen);
     }
 
+    @android.ravenwood.annotation.RavenwoodReplace
     public static char[] newUnpaddedCharArray(int minLen) {
         return (char[])VMRuntime.getRuntime().newUnpaddedArray(char.class, minLen);
     }
 
+    @android.ravenwood.annotation.RavenwoodReplace
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     public static int[] newUnpaddedIntArray(int minLen) {
         return (int[])VMRuntime.getRuntime().newUnpaddedArray(int.class, minLen);
     }
 
+    @android.ravenwood.annotation.RavenwoodReplace
     public static boolean[] newUnpaddedBooleanArray(int minLen) {
         return (boolean[])VMRuntime.getRuntime().newUnpaddedArray(boolean.class, minLen);
     }
 
+    @android.ravenwood.annotation.RavenwoodReplace
     public static long[] newUnpaddedLongArray(int minLen) {
         return (long[])VMRuntime.getRuntime().newUnpaddedArray(long.class, minLen);
     }
 
+    @android.ravenwood.annotation.RavenwoodReplace
     public static float[] newUnpaddedFloatArray(int minLen) {
         return (float[])VMRuntime.getRuntime().newUnpaddedArray(float.class, minLen);
     }
 
+    @android.ravenwood.annotation.RavenwoodReplace
     public static Object[] newUnpaddedObjectArray(int minLen) {
         return (Object[])VMRuntime.getRuntime().newUnpaddedArray(Object.class, minLen);
     }
 
+    @android.ravenwood.annotation.RavenwoodReplace
     @UnsupportedAppUsage(maxTargetSdk = Build.VERSION_CODES.R, trackingBug = 170729553)
     @SuppressWarnings("unchecked")
     public static <T> T[] newUnpaddedArray(Class<T> clazz, int minLen) {
         return (T[])VMRuntime.getRuntime().newUnpaddedArray(clazz, minLen);
+    }
+
+    public static byte[] newUnpaddedByteArray$ravenwood(int minLen) {
+        return new byte[minLen];
+    }
+
+    public static char[] newUnpaddedCharArray$ravenwood(int minLen) {
+        return new char[minLen];
+    }
+
+    public static int[] newUnpaddedIntArray$ravenwood(int minLen) {
+        return new int[minLen];
+    }
+
+    public static boolean[] newUnpaddedBooleanArray$ravenwood(int minLen) {
+        return new boolean[minLen];
+    }
+
+    public static long[] newUnpaddedLongArray$ravenwood(int minLen) {
+        return new long[minLen];
+    }
+
+    public static float[] newUnpaddedFloatArray$ravenwood(int minLen) {
+        return new float[minLen];
+    }
+
+    public static Object[] newUnpaddedObjectArray$ravenwood(int minLen) {
+        return new Object[minLen];
+    }
+
+    public static <T> T[] newUnpaddedArray$ravenwood(Class<T> clazz, int minLen) {
+        return (T[]) Array.newInstance(clazz, minLen);
     }
 
     /**
@@ -331,6 +370,16 @@ public class ArrayUtils {
         return array;
     }
 
+    @NonNull
+    public static int[] convertToIntArray(@NonNull ArraySet<Integer> set) {
+        final int size = set.size();
+        int[] array = new int[size];
+        for (int i = 0; i < size; i++) {
+            array[i] = set.valueAt(i);
+        }
+        return array;
+    }
+
     public static @Nullable long[] convertToLongArray(@Nullable int[] intArray) {
         if (intArray == null) return null;
         long[] array = new long[intArray.length];
@@ -341,15 +390,16 @@ public class ArrayUtils {
     }
 
     /**
-     * Combine multiple arrays into a single array.
+     * Returns the concatenation of the given arrays.  Only works for object arrays, not for
+     * primitive arrays.  See {@link #concat(byte[]...)} for a variant that works on byte arrays.
      *
      * @param kind The class of the array elements
-     * @param arrays The arrays to combine
+     * @param arrays The arrays to concatenate.  Null arrays are treated as empty.
      * @param <T> The class of the array elements (inferred from kind).
      * @return A single array containing all the elements of the parameter arrays.
      */
     @SuppressWarnings("unchecked")
-    public static @NonNull <T> T[] concatElements(Class<T> kind, @Nullable T[]... arrays) {
+    public static @NonNull <T> T[] concat(Class<T> kind, @Nullable T[]... arrays) {
         if (arrays == null || arrays.length == 0) {
             return createEmptyArray(kind);
         }
@@ -390,6 +440,29 @@ public class ArrayUtils {
         return (T[]) Array.newInstance(kind, 0);
     }
 
+    /**
+     * Returns the concatenation of the given byte arrays.  Null arrays are treated as empty.
+     */
+    public static @NonNull byte[] concat(@Nullable byte[]... arrays) {
+        if (arrays == null) {
+            return new byte[0];
+        }
+        int totalLength = 0;
+        for (byte[] a : arrays) {
+            if (a != null) {
+                totalLength += a.length;
+            }
+        }
+        final byte[] result = new byte[totalLength];
+        int pos = 0;
+        for (byte[] a : arrays) {
+            if (a != null) {
+                System.arraycopy(a, 0, result, pos, a.length);
+                pos += a.length;
+            }
+        }
+        return result;
+    }
 
     /**
      * Adds value to given array if not already present, providing set-like

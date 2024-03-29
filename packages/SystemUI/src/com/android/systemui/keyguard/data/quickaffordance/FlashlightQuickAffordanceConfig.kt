@@ -18,7 +18,7 @@
 package com.android.systemui.keyguard.data.quickaffordance
 
 import android.content.Context
-import com.android.systemui.R
+import com.android.systemui.res.R
 import com.android.systemui.animation.Expandable
 import com.android.systemui.common.coroutine.ChannelExt.trySendWithFailureLogging
 import com.android.systemui.common.coroutine.ConflatedCallbackFlow.conflatedCallbackFlow
@@ -75,8 +75,7 @@ constructor(
     override val key: String
         get() = BuiltInKeyguardQuickAffordanceKeys.FLASHLIGHT
 
-    override val pickerName: String
-        get() = context.getString(R.string.quick_settings_flashlight_label)
+    override fun pickerName(): String = context.getString(R.string.quick_settings_flashlight_label)
 
     override val pickerIconResourceId: Int
         get() = R.drawable.ic_flashlight_off

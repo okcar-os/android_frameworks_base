@@ -23,7 +23,7 @@ import android.graphics.Region;
 import android.view.GestureDetector;
 import android.view.MotionEvent;
 
-import com.android.systemui.shade.NotificationPanelViewController;
+import com.android.systemui.shade.ShadeViewController;
 import com.android.systemui.statusbar.phone.CentralSurfaces;
 
 import java.util.Optional;
@@ -37,12 +37,15 @@ import javax.inject.Named;
  */
 public class ShadeTouchHandler implements DreamTouchHandler {
     private final Optional<CentralSurfaces> mSurfaces;
+    private final ShadeViewController mShadeViewController;
     private final int mInitiationHeight;
 
     @Inject
     ShadeTouchHandler(Optional<CentralSurfaces> centralSurfaces,
+            ShadeViewController shadeViewController,
             @Named(NOTIFICATION_SHADE_GESTURE_INITIATION_HEIGHT) int initiationHeight) {
         mSurfaces = centralSurfaces;
+        mShadeViewController = shadeViewController;
         mInitiationHeight = initiationHeight;
     }
 
@@ -54,12 +57,7 @@ public class ShadeTouchHandler implements DreamTouchHandler {
         }
 
         session.registerInputListener(ev -> {
-            final NotificationPanelViewController viewController =
-                    mSurfaces.map(CentralSurfaces::getNotificationPanelViewController).orElse(null);
-
-            if (viewController != null) {
-                viewController.handleExternalTouch((MotionEvent) ev);
-            }
+            mShadeViewController.handleExternalTouch((MotionEvent) ev);
 
             if (ev instanceof MotionEvent) {
                 if (((MotionEvent) ev).getAction() == MotionEvent.ACTION_UP) {

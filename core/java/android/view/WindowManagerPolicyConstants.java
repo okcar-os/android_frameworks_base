@@ -55,13 +55,6 @@ public interface WindowManagerPolicyConstants {
     int PRESENCE_INTERNAL = 1 << 0;
     int PRESENCE_EXTERNAL = 1 << 1;
 
-    // Alternate bars position values
-    int ALT_BAR_UNKNOWN = -1;
-    int ALT_BAR_LEFT = 1 << 0;
-    int ALT_BAR_RIGHT = 1 << 1;
-    int ALT_BAR_BOTTOM = 1 << 2;
-    int ALT_BAR_TOP = 1 << 3;
-
     // Navigation bar position values
     int NAV_BAR_INVALID = -1;
     int NAV_BAR_LEFT = 1 << 0;
@@ -103,6 +96,12 @@ public interface WindowManagerPolicyConstants {
      * @hide
      */
     String EXTRA_START_REASON = "android.intent.extra.EXTRA_START_REASON";
+
+    /**
+     * Set to {@code true} when intent was invoked from pressing one of the brightness keys.
+     * @hide
+     */
+    String EXTRA_FROM_BRIGHTNESS_KEY = "android.intent.extra.FROM_BRIGHTNESS_KEY";
 
     // TODO: move this to a more appropriate place.
     interface PointerEventListener {

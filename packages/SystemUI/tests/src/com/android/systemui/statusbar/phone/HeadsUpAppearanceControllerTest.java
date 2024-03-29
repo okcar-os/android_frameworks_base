@@ -34,20 +34,22 @@ import android.widget.TextView;
 import androidx.test.filters.SmallTest;
 
 import com.android.systemui.SysuiTestCase;
-import com.android.systemui.flags.FeatureFlags;
-import com.android.systemui.flags.Flags;
+import com.android.systemui.flags.FakeFeatureFlagsClassic;
 import com.android.systemui.plugins.DarkIconDispatcher;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
-import com.android.systemui.shade.NotificationPanelViewController;
+import com.android.systemui.shade.ShadeHeadsUpTracker;
+import com.android.systemui.shade.ShadeViewController;
 import com.android.systemui.statusbar.CommandQueue;
 import com.android.systemui.statusbar.HeadsUpStatusBarView;
 import com.android.systemui.statusbar.notification.NotificationWakeUpCoordinator;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
+import com.android.systemui.statusbar.notification.domain.interactor.HeadsUpNotificationIconInteractor;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 import com.android.systemui.statusbar.notification.row.NotificationTestHelper;
 import com.android.systemui.statusbar.notification.stack.NotificationRoundnessManager;
 import com.android.systemui.statusbar.notification.stack.NotificationStackScrollLayoutController;
 import com.android.systemui.statusbar.policy.Clock;
+import com.android.systemui.statusbar.policy.HeadsUpManager;
 import com.android.systemui.statusbar.policy.KeyguardStateController;
 
 import org.junit.Assert;
@@ -64,23 +66,26 @@ public class HeadsUpAppearanceControllerTest extends SysuiTestCase {
 
     private final NotificationStackScrollLayoutController mStackScrollerController =
             mock(NotificationStackScrollLayoutController.class);
-    private final NotificationPanelViewController mPanelView =
-            mock(NotificationPanelViewController.class);
+    private final ShadeViewController mShadeViewController =
+            mock(ShadeViewController.class);
+    private final ShadeHeadsUpTracker mShadeHeadsUpTracker = mock(ShadeHeadsUpTracker.class);
     private final DarkIconDispatcher mDarkIconDispatcher = mock(DarkIconDispatcher.class);
     private HeadsUpAppearanceController mHeadsUpAppearanceController;
     private NotificationTestHelper mTestHelper;
     private ExpandableNotificationRow mRow;
     private NotificationEntry mEntry;
     private HeadsUpStatusBarView mHeadsUpStatusBarView;
-    private HeadsUpManagerPhone mHeadsUpManager;
+    private HeadsUpManager mHeadsUpManager;
     private View mOperatorNameView;
     private StatusBarStateController mStatusbarStateController;
+    private PhoneStatusBarTransitions mPhoneStatusBarTransitions;
     private KeyguardBypassController mBypassController;
     private NotificationWakeUpCoordinator mWakeUpCoordinator;
     private KeyguardStateController mKeyguardStateController;
     private CommandQueue mCommandQueue;
     private NotificationRoundnessManager mNotificationRoundnessManager;
-    private FeatureFlags mFeatureFlag;
+    private PhoneStatusBarView mPhoneStatusBarView = mock(PhoneStatusBarView.class);
+    private final FakeFeatureFlagsClassic mFeatureFlags = new FakeFeatureFlagsClassic();
 
     @Before
     public void setUp() throws Exception {
@@ -93,33 +98,35 @@ public class HeadsUpAppearanceControllerTest extends SysuiTestCase {
         mEntry = mRow.getEntry();
         mHeadsUpStatusBarView = new HeadsUpStatusBarView(mContext, mock(View.class),
                 mock(TextView.class));
-        mHeadsUpManager = mock(HeadsUpManagerPhone.class);
+        mHeadsUpManager = mock(HeadsUpManager.class);
         mOperatorNameView = new View(mContext);
         mStatusbarStateController = mock(StatusBarStateController.class);
+        mPhoneStatusBarTransitions = mock(PhoneStatusBarTransitions.class);
         mBypassController = mock(KeyguardBypassController.class);
         mWakeUpCoordinator = mock(NotificationWakeUpCoordinator.class);
         mKeyguardStateController = mock(KeyguardStateController.class);
         mCommandQueue = mock(CommandQueue.class);
         mNotificationRoundnessManager = mock(NotificationRoundnessManager.class);
-        mFeatureFlag = mock(FeatureFlags.class);
-        when(mFeatureFlag.isEnabled(Flags.USE_ROUNDNESS_SOURCETYPES)).thenReturn(true);
+        when(mShadeViewController.getShadeHeadsUpTracker()).thenReturn(mShadeHeadsUpTracker);
         mHeadsUpAppearanceController = new HeadsUpAppearanceController(
                 mock(NotificationIconAreaController.class),
                 mHeadsUpManager,
                 mStatusbarStateController,
+                mPhoneStatusBarTransitions,
                 mBypassController,
                 mWakeUpCoordinator,
                 mDarkIconDispatcher,
                 mKeyguardStateController,
                 mCommandQueue,
                 mStackScrollerController,
-                mPanelView,
+                mShadeViewController,
                 mNotificationRoundnessManager,
-                mFeatureFlag,
                 mHeadsUpStatusBarView,
                 new Clock(mContext, null),
+                mFeatureFlags,
+                mock(HeadsUpNotificationIconInteractor.class),
                 Optional.of(mOperatorNameView),
-                new View(mContext));
+                mPhoneStatusBarView);
         mHeadsUpAppearanceController.setAppearFraction(0.0f, 0.0f);
     }
 
@@ -192,19 +199,20 @@ public class HeadsUpAppearanceControllerTest extends SysuiTestCase {
                 mock(NotificationIconAreaController.class),
                 mHeadsUpManager,
                 mStatusbarStateController,
+                mPhoneStatusBarTransitions,
                 mBypassController,
                 mWakeUpCoordinator,
                 mDarkIconDispatcher,
                 mKeyguardStateController,
                 mCommandQueue,
                 mStackScrollerController,
-                mPanelView,
+                mShadeViewController,
                 mNotificationRoundnessManager,
-                mFeatureFlag,
                 mHeadsUpStatusBarView,
                 new Clock(mContext, null),
+                mFeatureFlags, mock(HeadsUpNotificationIconInteractor.class),
                 Optional.empty(),
-                new View(mContext));
+                mPhoneStatusBarView));
 
         assertEquals(expandedHeight, newController.mExpandedHeight, 0.0f);
         assertEquals(appearFraction, newController.mAppearFraction, 0.0f);
@@ -214,15 +222,15 @@ public class HeadsUpAppearanceControllerTest extends SysuiTestCase {
     public void testDestroy() {
         reset(mHeadsUpManager);
         reset(mDarkIconDispatcher);
-        reset(mPanelView);
+        reset(mShadeHeadsUpTracker);
         reset(mStackScrollerController);
 
         mHeadsUpAppearanceController.onViewDetached();
 
         verify(mHeadsUpManager).removeListener(any());
         verify(mDarkIconDispatcher).removeDarkReceiver((DarkIconDispatcher.DarkReceiver) any());
-        verify(mPanelView).removeTrackingHeadsUpListener(any());
-        verify(mPanelView).setHeadsUpAppearanceController(isNull());
+        verify(mShadeHeadsUpTracker).removeTrackingHeadsUpListener(any());
+        verify(mShadeHeadsUpTracker).setHeadsUpAppearanceController(isNull());
         verify(mStackScrollerController).removeOnExpandedHeightChangedListener(any());
     }
 
@@ -288,5 +296,19 @@ public class HeadsUpAppearanceControllerTest extends SysuiTestCase {
                 /* actual = */ mRow.getTopRoundness(),
                 /* delta = */ 0.001
         );
+    }
+
+    @Test
+    public void onHeadsUpStateChanged_true_transitionsNotified() {
+        mHeadsUpAppearanceController.onHeadsUpStateChanged(mEntry, true);
+
+        verify(mPhoneStatusBarTransitions).onHeadsUpStateChanged(true);
+    }
+
+    @Test
+    public void onHeadsUpStateChanged_false_transitionsNotified() {
+        mHeadsUpAppearanceController.onHeadsUpStateChanged(mEntry, false);
+
+        verify(mPhoneStatusBarTransitions).onHeadsUpStateChanged(false);
     }
 }

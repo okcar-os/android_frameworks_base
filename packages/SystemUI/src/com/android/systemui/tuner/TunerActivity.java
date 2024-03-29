@@ -27,7 +27,7 @@ import androidx.preference.PreferenceScreen;
 import com.android.settingslib.collapsingtoolbar.CollapsingToolbarBaseActivity;
 
 import com.android.systemui.Dependency;
-import com.android.systemui.R;
+import com.android.systemui.res.R;
 import com.android.systemui.demomode.DemoModeController;
 import com.android.systemui.fragments.FragmentService;
 import com.android.systemui.util.settings.GlobalSettings;
@@ -41,18 +41,15 @@ public class TunerActivity extends CollapsingToolbarBaseActivity implements
     private static final String TAG_TUNER = "tuner";
 
     private final DemoModeController mDemoModeController;
-    private final TunerService mTunerService;
     private final GlobalSettings mGlobalSettings;
 
     @Inject
     TunerActivity(
             DemoModeController demoModeController,
-            TunerService tunerService,
             GlobalSettings globalSettings
     ) {
         super();
         mDemoModeController = demoModeController;
-        mTunerService = tunerService;
         mGlobalSettings = globalSettings;
     }
 
@@ -68,7 +65,7 @@ public class TunerActivity extends CollapsingToolbarBaseActivity implements
             } else if ("com.android.settings.action.STATUS_BAR_TUNER".equals(action)) {
                 fragment = new StatusBarTuner();
             } else {
-                fragment = new TunerFragment(mTunerService);
+                fragment = new TunerFragment();
             }
 
             getFragmentManager().beginTransaction().replace(R.id.content_frame,

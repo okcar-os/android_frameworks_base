@@ -24,13 +24,18 @@ import static com.android.wm.shell.sysui.ShellSharedConstants.KEY_EXTRA_SHELL_RE
 
 import android.app.ActivityManager;
 import android.app.ActivityTaskManager;
+import android.app.IApplicationThread;
+import android.app.PendingIntent;
 import android.app.TaskInfo;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
+import android.os.Bundle;
 import android.os.RemoteException;
 import android.util.Slog;
 import android.util.SparseArray;
 import android.util.SparseIntArray;
+import android.view.IRecentsAnimationRunner;
 
 import androidx.annotation.BinderThread;
 import androidx.annotation.NonNull;
@@ -79,6 +84,7 @@ public class RecentTasksController implements TaskStackListenerCallback,
     private final TaskStackListenerImpl mTaskStackListener;
     private final RecentTasksImpl mImpl = new RecentTasksImpl();
     private final ActivityTaskManager mActivityTaskManager;
+    private RecentsTransitionHandler mTransitionHandler = null;
     private IRecentTasksListener mListener;
     private final boolean mIsDesktopMode;
 
@@ -150,6 +156,10 @@ public class RecentTasksController implements TaskStackListenerCallback,
         mDesktopModeTaskRepository.ifPresent(it -> it.addActiveTaskListener(this));
     }
 
+    void setTransitionHandler(RecentsTransitionHandler handler) {
+        mTransitionHandler = handler;
+    }
+
     /**
      * Adds a split pair. This call does not validate the taskIds, only that they are not the same.
      */
@@ -191,6 +201,17 @@ public class RecentTasksController implements TaskStackListenerCallback,
             ProtoLog.v(ShellProtoLogGroup.WM_SHELL_RECENT_TASKS, "Remove split pair: %d, %d",
                     taskId, pairedTaskId);
         }
+    }
+
+    @Nullable
+    public SplitBounds getSplitBoundsForTaskId(int taskId) {
+        if (taskId == INVALID_TASK_ID) {
+            return null;
+        }
+
+        // We could do extra verification of requiring both taskIds of a pair and verifying that
+        // the same split bounds object is returned... but meh. Seems unnecessary.
+        return mTaskSplitBoundsMap.get(taskId);
     }
 
     @Override
@@ -235,7 +256,7 @@ public class RecentTasksController implements TaskStackListenerCallback,
     }
 
     @Override
-    public void onActiveTasksChanged() {
+    public void onActiveTasksChanged(int displayId) {
         notifyRecentTasksChanged();
     }
 
@@ -319,7 +340,7 @@ public class RecentTasksController implements TaskStackListenerCallback,
                 continue;
             }
 
-            if (DesktopModeStatus.isProto2Enabled() && mDesktopModeTaskRepository.isPresent()
+            if (DesktopModeStatus.isEnabled() && mDesktopModeTaskRepository.isPresent()
                     && mDesktopModeTaskRepository.get().isActiveTask(taskInfo.taskId)) {
                 // Freeform tasks will be added as a separate entry
                 freeformTasks.add(taskInfo);
@@ -361,7 +382,8 @@ public class RecentTasksController implements TaskStackListenerCallback,
      * Find the background task that match the given component.
      */
     @Nullable
-    public ActivityManager.RecentTaskInfo findTaskInBackground(ComponentName componentName) {
+    public ActivityManager.RecentTaskInfo findTaskInBackground(ComponentName componentName,
+            int userId) {
         if (componentName == null) {
             return null;
         }
@@ -373,7 +395,7 @@ public class RecentTasksController implements TaskStackListenerCallback,
             if (task.isVisible) {
                 continue;
             }
-            if (componentName.equals(task.baseIntent.getComponent())) {
+            if (componentName.equals(task.baseIntent.getComponent()) && userId == task.userId) {
                 return task;
             }
         }
@@ -404,6 +426,21 @@ public class RecentTasksController implements TaskStackListenerCallback,
                 List<GroupedRecentTaskInfo> tasks =
                         RecentTasksController.this.getRecentTasks(maxNum, flags, userId);
                 executor.execute(() -> callback.accept(tasks));
+            });
+        }
+
+        @Override
+        public void addAnimationStateListener(Executor executor, Consumer<Boolean> listener) {
+            mMainExecutor.execute(() -> {
+                if (mTransitionHandler == null) {
+                    return;
+                }
+                mTransitionHandler.addTransitionStateListener(new RecentsTransitionStateListener() {
+                    @Override
+                    public void onAnimationStateChanged(boolean running) {
+                        executor.execute(() -> listener.accept(running));
+                    }
+                });
             });
         }
     }
@@ -491,6 +528,19 @@ public class RecentTasksController implements TaskStackListenerCallback,
                             .toArray(new ActivityManager.RunningTaskInfo[0]),
                     true /* blocking */);
             return tasks[0];
+        }
+
+        @Override
+        public void startRecentsTransition(PendingIntent intent, Intent fillIn, Bundle options,
+                IApplicationThread appThread, IRecentsAnimationRunner listener) {
+            if (mController.mTransitionHandler == null) {
+                Slog.e(TAG, "Used shell-transitions startRecentsTransition without"
+                        + " shell-transitions");
+                return;
+            }
+            executeRemoteCallWithTaskPermission(mController, "startRecentsTransition",
+                    (controller) -> controller.mTransitionHandler.startRecentsTransition(
+                            intent, fillIn, options, appThread, listener));
         }
     }
 }

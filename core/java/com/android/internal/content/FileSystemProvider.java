@@ -62,9 +62,9 @@ import java.nio.file.FileVisitor;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.BasicFileAttributes;
-import java.util.ArrayDeque;
+ import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Queue;
@@ -234,9 +234,9 @@ public abstract class FileSystemProvider extends DocumentsProvider {
             throw new FileNotFoundException(doc + " is not found under " + parent);
         }
 
-        LinkedList<String> path = new LinkedList<>();
+        List<String> path = new ArrayList<>();
         while (doc != null && FileUtils.contains(parent, doc)) {
-            path.addFirst(getDocIdForFile(doc));
+            path.add(0, getDocIdForFile(doc));
 
             doc = doc.getParentFile();
         }

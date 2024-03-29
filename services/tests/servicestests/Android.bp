@@ -2,6 +2,13 @@
 // Build FrameworksServicesTests package
 //########################################################################
 
+java_defaults {
+    name: "FrameworksServicesTests-jni-defaults",
+    jni_libs: [
+        "libservicestestjni",
+    ],
+}
+
 package {
     // See: http://go/android-license-faq
     // A large-scale-change added 'default_applicable_licenses' to import
@@ -13,6 +20,9 @@ package {
 
 android_test {
     name: "FrameworksServicesTests",
+    defaults: [
+        "FrameworksServicesTests-jni-defaults",
+    ],
 
     // Include all test java files.
     srcs: [
@@ -28,28 +38,32 @@ android_test {
         "services.accessibility",
         "services.appwidget",
         "services.autofill",
+        "services.contentcapture",
         "services.backup",
         "services.companion",
         "services.core",
+        "services.credentials",
         "services.devicepolicy",
+        "services.flags",
         "services.net",
         "services.people",
         "services.usage",
+        "service-permission.stubs.system_server",
         "guava",
         "guava-android-testlib",
         "androidx.test.core",
         "androidx.test.ext.truth",
         "androidx.test.runner",
         "androidx.test.rules",
+        "androidx.test.ext.junit",
         "cts-wm-util",
         "platform-compat-test-rules",
         "mockito-target-minus-junit4",
         "platform-test-annotations",
         "ShortcutManagerTestUtils",
-        "truth-prebuilt",
+        "truth",
         "testables",
-        "testng",
-        "ub-uiautomator",
+        "androidx.test.uiautomator_uiautomator",
         "platformprotosnano",
         "framework-protos",
         "hamcrest-library",
@@ -58,9 +72,14 @@ android_test {
         // TODO: remove once Android migrates to JUnit 4.12,
         // which provides assertThrows
         "testng",
+        "truth",
         "junit",
-        "platform-compat-test-rules",
+        "junit-params",
         "ActivityContext",
+        "coretests-aidl",
+        "securebox",
+        "flag-junit",
+        "ravenwood-junit",
     ],
 
     libs: [
@@ -74,7 +93,11 @@ android_test {
     ],
 
     platform_apis: true,
-    test_suites: ["device-tests"],
+
+    test_suites: [
+        "device-tests",
+        "automotive-tests",
+    ],
 
     certificate: "platform",
 
@@ -102,25 +125,44 @@ android_test {
 
     data: [
         ":JobTestApp",
-        ":StubTestApp",
+        ":SimpleServiceTestApp1",
+        ":SimpleServiceTestApp2",
+        ":SimpleServiceTestApp3",
+        ":SuspendTestApp",
+        ":MediaButtonReceiverHolderTestHelperApp",
+        "data/broken_shortcut.xml",
     ],
 
     java_resources: [
         ":com.android.apex.cts.shim.v1_prebuilt",
         ":com.android.apex.cts.shim.v2_different_certificate_prebuilt",
         ":com.android.apex.cts.shim.v2_unsigned_apk_container_prebuilt",
-        ":apex.test",
-        ":test.rebootless_apex_v1",
-        ":test.rebootless_apex_v2",
     ],
     resource_zips: [":FrameworksServicesTests_apks_as_resources"],
+}
+
+android_ravenwood_test {
+    name: "FrameworksServicesTestsRavenwood",
+    libs: [
+        "android.test.mock",
+    ],
+    static_libs: [
+        "androidx.annotation_annotation",
+        "androidx.test.rules",
+        "mockito_ravenwood",
+        "services.core",
+    ],
+    srcs: [
+        "src/com/android/server/uri/**/*.java",
+    ],
+    auto_gen_config: true,
 }
 
 java_library {
     name: "servicestests-core-utils",
     srcs: [
-        "src/com/android/server/pm/PackageSettingBuilder.java",
         "src/com/android/server/am/DeviceConfigSession.java",
+        "src/com/android/server/pm/PackageSettingBuilder.java",
         "src/com/android/server/pm/parsing/TestPackageParser2.kt",
     ],
     static_libs: [

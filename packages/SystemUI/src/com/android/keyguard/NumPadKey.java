@@ -15,6 +15,8 @@
  */
 package com.android.keyguard;
 
+import static com.android.systemui.bouncer.shared.constants.KeyguardBouncerConstants.ColorId.NUM_PAD_KEY;
+
 import android.content.Context;
 import android.content.res.Configuration;
 import android.content.res.TypedArray;
@@ -34,7 +36,9 @@ import android.widget.TextView;
 import androidx.annotation.Nullable;
 
 import com.android.settingslib.Utils;
-import com.android.systemui.R;
+import com.android.systemui.res.R;
+
+import lineageos.providers.LineageSettings;
 
 import lineageos.providers.LineageSettings;
 
@@ -135,7 +139,7 @@ public class NumPadKey extends ViewGroup implements NumPadAnimationListener {
     }
 
     private void updateText() {
-       boolean scramblePin = (LineageSettings.System.getInt(getContext().getContentResolver(),
+        boolean scramblePin = (LineageSettings.System.getInt(getContext().getContentResolver(),
                 LineageSettings.System.LOCKSCREEN_PIN_SCRAMBLE_LAYOUT, 0) == 1);
         if (mDigit >= 0) {
             mDigitText.setText(Integer.toString(mDigit));
@@ -163,7 +167,7 @@ public class NumPadKey extends ViewGroup implements NumPadAnimationListener {
      * Reload colors from resources.
      **/
     public void reloadColors() {
-        int textColor = Utils.getColorAttr(getContext(), android.R.attr.textColorPrimary)
+        int textColor = Utils.getColorAttr(getContext(), NUM_PAD_KEY)
                 .getDefaultColor();
         int klondikeColor = Utils.getColorAttr(getContext(), android.R.attr.textColorSecondary)
                 .getDefaultColor();
@@ -222,7 +226,9 @@ public class NumPadKey extends ViewGroup implements NumPadAnimationListener {
         left = centerX - mKlondikeText.getMeasuredWidth() / 2;
         mKlondikeText.layout(left, top, left + mKlondikeText.getMeasuredWidth(), bottom);
 
-        if (mAnimator != null) mAnimator.onLayout(b - t);
+        int width = r - l;
+        int height = b - t;
+        if (mAnimator != null) mAnimator.onLayout(width, height);
     }
 
     @Override

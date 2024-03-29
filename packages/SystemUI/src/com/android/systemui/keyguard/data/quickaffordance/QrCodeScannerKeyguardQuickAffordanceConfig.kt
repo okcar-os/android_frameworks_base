@@ -18,7 +18,7 @@
 package com.android.systemui.keyguard.data.quickaffordance
 
 import android.content.Context
-import com.android.systemui.R
+import com.android.systemui.res.R
 import com.android.systemui.animation.Expandable
 import com.android.systemui.common.coroutine.ChannelExt.trySendWithFailureLogging
 import com.android.systemui.common.coroutine.ConflatedCallbackFlow.conflatedCallbackFlow
@@ -42,7 +42,7 @@ constructor(
 
     override val key: String = BuiltInKeyguardQuickAffordanceKeys.QR_CODE_SCANNER
 
-    override val pickerName = context.getString(R.string.qr_code_scanner_title)
+    override fun pickerName(): String = context.getString(R.string.qr_code_scanner_title)
 
     override val pickerIconResourceId = R.drawable.ic_qr_code_scanner
 
@@ -53,6 +53,7 @@ constructor(
                     override fun onQRCodeScannerActivityChanged() {
                         trySendWithFailureLogging(state(), TAG)
                     }
+
                     override fun onQRCodeScannerPreferenceChanged() {
                         trySendWithFailureLogging(state(), TAG)
                     }
@@ -77,18 +78,8 @@ constructor(
 
     override suspend fun getPickerScreenState(): KeyguardQuickAffordanceConfig.PickerScreenState {
         return when {
-            !controller.isAvailableOnDevice ->
+            !isEnabledForPickerStateOption() ->
                 KeyguardQuickAffordanceConfig.PickerScreenState.UnavailableOnDevice
-            !controller.isAbleToOpenCameraApp ->
-                KeyguardQuickAffordanceConfig.PickerScreenState.Disabled(
-                    instructions =
-                        listOf(
-                            context.getString(
-                                R.string
-                                    .keyguard_affordance_enablement_dialog_qr_scanner_instruction
-                            ),
-                        ),
-                )
             else -> KeyguardQuickAffordanceConfig.PickerScreenState.Default()
         }
     }
@@ -117,6 +108,11 @@ constructor(
         } else {
             KeyguardQuickAffordanceConfig.LockScreenState.Hidden
         }
+    }
+
+    /** Returns whether QR scanner be shown as one of available lockscreen shortcut option. */
+    private fun isEnabledForPickerStateOption(): Boolean {
+        return controller.isAbleToLaunchScannerActivity && controller.isAllowedOnLockScreen
     }
 
     companion object {

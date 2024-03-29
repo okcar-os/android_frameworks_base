@@ -90,4 +90,6 @@ public class NvAppProfileSettingId {
     public static int MEDIA_ENABLE_MSD_HAL = 123;
     public static int DEEPISP_DISABLED = 124;
     public static int OGL_GPFIFO_SIZE_ENTRIES = 125;
+    public static int FORCE_QUERY_PACKAGES = 126;
+    public static int AUTO_MEDIA_SCAN_PACKAGES = 127;
 }

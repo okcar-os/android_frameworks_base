@@ -468,7 +468,7 @@ public class SettingsProviderTest extends BaseSettingsProviderTest {
     // settings are reset.  But it should still be possible to explicitly set its value.
     @Test
     public void testSecureFrpModeSettingCannotBeReset() throws Exception {
-        final String name = Settings.Secure.SECURE_FRP_MODE;
+        final String name = Settings.Global.SECURE_FRP_MODE;
         final String origValue = getSetting(SETTING_TYPE_GLOBAL, name);
         setSettingViaShell(SETTING_TYPE_GLOBAL, name, "1", false);
         try {

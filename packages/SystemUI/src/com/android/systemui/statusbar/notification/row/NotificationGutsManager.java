@@ -44,14 +44,18 @@ import com.android.internal.annotations.VisibleForTesting;
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.UiEventLogger;
 import com.android.internal.logging.nano.MetricsProto;
+import com.android.internal.statusbar.IStatusBarService;
 import com.android.settingslib.notification.ConversationIconFactory;
-import com.android.systemui.R;
+import com.android.systemui.CoreStartable;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dagger.qualifiers.Background;
 import com.android.systemui.dagger.qualifiers.Main;
 import com.android.systemui.people.widget.PeopleSpaceWidgetManager;
+import com.android.systemui.plugins.ActivityStarter;
 import com.android.systemui.plugins.statusbar.NotificationMenuRowPlugin;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
+import com.android.systemui.res.R;
+import com.android.systemui.scene.domain.interactor.WindowRootViewVisibilityInteractor;
 import com.android.systemui.settings.UserContextProvider;
 import com.android.systemui.shade.ShadeController;
 import com.android.systemui.statusbar.NotificationLockscreenUserManager;
@@ -67,20 +71,20 @@ import com.android.systemui.statusbar.notification.collection.render.NotifGutsVi
 import com.android.systemui.statusbar.notification.stack.NotificationListContainer;
 import com.android.systemui.statusbar.phone.CentralSurfaces;
 import com.android.systemui.statusbar.policy.DeviceProvisionedController;
+import com.android.systemui.statusbar.policy.HeadsUpManager;
+import com.android.systemui.util.kotlin.JavaAdapter;
 import com.android.systemui.wmshell.BubblesManager;
 
 import java.util.Optional;
 
 import javax.inject.Inject;
 
-import dagger.Lazy;
-
 /**
  * Handles various NotificationGuts related tasks, such as binding guts to a row, opening and
  * closing guts, and keeping track of the currently exposed notification guts.
  */
 @SysUISingleton
-public class NotificationGutsManager implements NotifGutsViewManager {
+public class NotificationGutsManager implements NotifGutsViewManager, CoreStartable {
     private static final String TAG = "NotificationGutsManager";
 
     // Must match constant in Settings. Used to highlight preferences when linking to Settings.
@@ -96,6 +100,7 @@ public class NotificationGutsManager implements NotifGutsViewManager {
     // Dependencies:
     private final NotificationLockscreenUserManager mLockscreenUserManager;
     private final StatusBarStateController mStatusBarStateController;
+    private final IStatusBarService mStatusBarService;
     private final DeviceProvisionedController mDeviceProvisionedController;
     private final AssistantFeedbackController mAssistantFeedbackController;
 
@@ -107,9 +112,9 @@ public class NotificationGutsManager implements NotifGutsViewManager {
     private NotificationListContainer mListContainer;
     private OnSettingsClickListener mOnSettingsClickListener;
 
-    private final Lazy<Optional<CentralSurfaces>> mCentralSurfacesOptionalLazy;
     private final Handler mMainHandler;
     private final Handler mBgHandler;
+    private final JavaAdapter mJavaAdapter;
     private final Optional<BubblesManager> mBubblesManagerOptional;
     private Runnable mOpenRunnable;
     private final INotificationManager mNotificationManager;
@@ -122,13 +127,16 @@ public class NotificationGutsManager implements NotifGutsViewManager {
     private final UserContextProvider mContextTracker;
     private final UiEventLogger mUiEventLogger;
     private final ShadeController mShadeController;
+    private final WindowRootViewVisibilityInteractor mWindowRootViewVisibilityInteractor;
     private NotifGutsViewListener mGutsListener;
+    private final HeadsUpManager mHeadsUpManager;
+    private final ActivityStarter mActivityStarter;
 
     @Inject
     public NotificationGutsManager(Context context,
-            Lazy<Optional<CentralSurfaces>> centralSurfacesOptionalLazy,
             @Main Handler mainHandler,
             @Background Handler bgHandler,
+            JavaAdapter javaAdapter,
             AccessibilityManager accessibilityManager,
             HighPriorityProvider highPriorityProvider,
             INotificationManager notificationManager,
@@ -143,14 +151,18 @@ public class NotificationGutsManager implements NotifGutsViewManager {
             UiEventLogger uiEventLogger,
             OnUserInteractionCallback onUserInteractionCallback,
             ShadeController shadeController,
+            WindowRootViewVisibilityInteractor windowRootViewVisibilityInteractor,
             NotificationLockscreenUserManager notificationLockscreenUserManager,
             StatusBarStateController statusBarStateController,
+            IStatusBarService statusBarService,
             DeviceProvisionedController deviceProvisionedController,
-            MetricsLogger metricsLogger) {
+            MetricsLogger metricsLogger,
+            HeadsUpManager headsUpManager,
+            ActivityStarter activityStarter) {
         mContext = context;
-        mCentralSurfacesOptionalLazy = centralSurfacesOptionalLazy;
         mMainHandler = mainHandler;
         mBgHandler = bgHandler;
+        mJavaAdapter = javaAdapter;
         mAccessibilityManager = accessibilityManager;
         mHighPriorityProvider = highPriorityProvider;
         mNotificationManager = notificationManager;
@@ -165,10 +177,14 @@ public class NotificationGutsManager implements NotifGutsViewManager {
         mUiEventLogger = uiEventLogger;
         mOnUserInteractionCallback = onUserInteractionCallback;
         mShadeController = shadeController;
+        mWindowRootViewVisibilityInteractor = windowRootViewVisibilityInteractor;
         mLockscreenUserManager = notificationLockscreenUserManager;
         mStatusBarStateController = statusBarStateController;
+        mStatusBarService = statusBarService;
         mDeviceProvisionedController = deviceProvisionedController;
         mMetricsLogger = metricsLogger;
+        mHeadsUpManager = headsUpManager;
+        mActivityStarter = activityStarter;
     }
 
     public void setUpWithPresenter(NotificationPresenter presenter,
@@ -182,6 +198,25 @@ public class NotificationGutsManager implements NotifGutsViewManager {
     public void setNotificationActivityStarter(
             NotificationActivityStarter notificationActivityStarter) {
         mNotificationActivityStarter = notificationActivityStarter;
+    }
+
+    @Override
+    public void start() {
+        mJavaAdapter.alwaysCollectFlow(
+                mWindowRootViewVisibilityInteractor.isLockscreenOrShadeVisible(),
+                this::onLockscreenShadeVisibilityChanged);
+    }
+
+    private void onLockscreenShadeVisibilityChanged(boolean visible) {
+        if (!visible) {
+            closeAndSaveGuts(
+                    /* removeLeavebehind= */ true ,
+                    /* force= */ true,
+                    /* removeControls= */ true,
+                    /* x= */ -1,
+                    /* y= */ -1,
+                    /* resetMenu= */ true);
+        }
     }
 
     public void onDensityOrFontScaleChanged(NotificationEntry entry) {
@@ -265,7 +300,7 @@ public class NotificationGutsManager implements NotifGutsViewManager {
             if (mGutsListener != null) {
                 mGutsListener.onGutsClose(entry);
             }
-            String key = entry.getKey();
+            mHeadsUpManager.setGutsShown(row.getEntry(), false);
         });
 
         View gutsView = item.getGutsView();
@@ -327,7 +362,8 @@ public class NotificationGutsManager implements NotifGutsViewManager {
         PackageManager pmUser = CentralSurfaces.getPackageManagerForUser(mContext,
                 userHandle.getIdentifier());
 
-        feedbackInfo.bindGuts(pmUser, sbn, row.getEntry(), row, mAssistantFeedbackController);
+        feedbackInfo.bindGuts(pmUser, sbn, row.getEntry(), row, mAssistantFeedbackController,
+                mStatusBarService, this);
     }
 
     /**
@@ -372,7 +408,6 @@ public class NotificationGutsManager implements NotifGutsViewManager {
                 mChannelEditorDialogController,
                 packageName,
                 row.getEntry().getChannel(),
-                row.getUniqueChannels(),
                 row.getEntry(),
                 onSettingsClick,
                 onAppSettingsClick,
@@ -418,7 +453,6 @@ public class NotificationGutsManager implements NotifGutsViewManager {
                 mChannelEditorDialogController,
                 packageName,
                 row.getEntry().getChannel(),
-                row.getUniqueChannels(),
                 row.getEntry(),
                 onSettingsClick,
                 mDeviceProvisionedController.isDeviceProvisioned(),
@@ -426,7 +460,7 @@ public class NotificationGutsManager implements NotifGutsViewManager {
     }
 
     /**
-     * Sets up the {@link ConversationInfo} inside the notification row's guts.
+     * Sets up the {@link NotificationConversationInfo} inside the notification row's guts.
      * @param row view to set up the guts for
      * @param notificationInfoView view to set up/bind within {@code row}
      */
@@ -509,7 +543,7 @@ public class NotificationGutsManager implements NotifGutsViewManager {
             mNotificationGutsExposed.removeCallbacks(mOpenRunnable);
             mNotificationGutsExposed.closeControls(removeLeavebehinds, removeControls, x, y, force);
         }
-        if (resetMenu) {
+        if (resetMenu && mListContainer != null) {
             mListContainer.resetExposedMenuView(false /* animate */, true /* force */);
         }
     }
@@ -554,19 +588,18 @@ public class NotificationGutsManager implements NotifGutsViewManager {
                             .setLeaveOpenOnKeyguardHide(true);
                 }
 
-                Optional<CentralSurfaces> centralSurfacesOptional =
-                        mCentralSurfacesOptionalLazy.get();
-                if (centralSurfacesOptional.isPresent()) {
-                    Runnable r = () -> mMainHandler.post(
-                            () -> openGutsInternal(view, x, y, menuItem));
-                    centralSurfacesOptional.get().executeRunnableDismissingKeyguard(
-                            r,
-                            null /* cancelAction */,
-                            false /* dismissShade */,
-                            true /* afterKeyguardGone */,
-                            true /* deferred */);
-                    return true;
-                }
+                Runnable r = () -> mMainHandler.post(
+                        () -> openGutsInternal(view, x, y, menuItem));
+                // If the bouncer shows, it will block the TOUCH_UP event from reaching the notif,
+                // so explicitly mark it as unpressed here to reset the touch animation.
+                view.setPressed(false);
+                mActivityStarter.executeRunnableDismissingKeyguard(
+                        r,
+                        null /* cancelAction */,
+                        false /* dismissShade */,
+                        true /* afterKeyguardGone */,
+                        true /* deferred */);
+                return true;
                 /**
                  * When {@link CentralSurfaces} doesn't exist, falling through to call
                  * {@link #openGutsInternal(View,int,int,NotificationMenuRowPlugin.MenuItem)}.
@@ -648,6 +681,7 @@ public class NotificationGutsManager implements NotifGutsViewManager {
                 row.closeRemoteInput();
                 mListContainer.onHeightChanged(row, true /* needsAnimation */);
                 mGutsMenuItem = menuItem;
+                mHeadsUpManager.setGutsShown(row.getEntry(), true);
             }
         };
         guts.post(mOpenRunnable);

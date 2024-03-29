@@ -26,6 +26,7 @@ import android.os.IBinder;
 import android.os.RemoteException;
 import android.util.Singleton;
 import android.view.RemoteAnimationAdapter;
+import android.view.SurfaceControl;
 
 /**
  * Base class for organizing specific types of windows like Tasks and DisplayAreas
@@ -39,14 +40,11 @@ public class WindowOrganizer {
      * Apply multiple WindowContainer operations at once.
      *
      * Note that using this API requires the caller to hold
-     * {@link android.Manifest.permission#MANAGE_ACTIVITY_TASKS}, unless the caller is using
-     * {@link TaskFragmentOrganizer}, in which case it is allowed to change TaskFragment that is
-     * created by itself.
+     * {@link android.Manifest.permission#MANAGE_ACTIVITY_TASKS}.
      *
      * @param t The transaction to apply.
      */
-    @RequiresPermission(value = android.Manifest.permission.MANAGE_ACTIVITY_TASKS,
-            conditional = true)
+    @RequiresPermission(value = android.Manifest.permission.MANAGE_ACTIVITY_TASKS)
     public void applyTransaction(@NonNull WindowContainerTransaction t) {
         try {
             if (!t.isEmpty()) {
@@ -117,19 +115,15 @@ public class WindowOrganizer {
      * Finishes a running transition.
      * @param transitionToken The transition to finish. Can't be null.
      * @param t A set of window operations to apply before finishing.
-     * @param callback A sync callback (if provided). See {@link #applySyncTransaction}.
-     * @return An ID for the sync operation if performed. See {@link #applySyncTransaction}.
      *
      * @hide
      */
     @SuppressLint("ExecutorRegistration")
     @RequiresPermission(android.Manifest.permission.MANAGE_ACTIVITY_TASKS)
-    public int finishTransition(@NonNull IBinder transitionToken,
-            @Nullable WindowContainerTransaction t,
-            @Nullable WindowContainerTransactionCallback callback) {
+    public void finishTransition(@NonNull IBinder transitionToken,
+            @Nullable WindowContainerTransaction t) {
         try {
-            return getWindowOrganizerController().finishTransition(transitionToken, t,
-                    callback != null ? callback.mInterface : null);
+            getWindowOrganizerController().finishTransition(transitionToken, t);
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
@@ -179,6 +173,26 @@ public class WindowOrganizer {
         } catch (RemoteException e) {
             throw e.rethrowFromSystemServer();
         }
+    }
+
+    /**
+     * Use WM's transaction-queue instead of Shell's independent one. This is necessary
+     * if WM and Shell need to coordinate transactions (eg. for shell transitions).
+     * @return true if successful, false otherwise.
+     * @hide
+     */
+    public boolean shareTransactionQueue() {
+        final IBinder wmApplyToken;
+        try {
+            wmApplyToken = getWindowOrganizerController().getApplyToken();
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+        if (wmApplyToken == null) {
+            return false;
+        }
+        SurfaceControl.Transaction.setDefaultApplyToken(wmApplyToken);
+        return true;
     }
 
     static IWindowOrganizerController getWindowOrganizerController() {

@@ -16,16 +16,29 @@
 
 package com.android.internal.util;
 
-import static com.android.internal.util.ArrayUtils.concatElements;
-
 import static org.junit.Assert.assertArrayEquals;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
-import junit.framework.TestCase;
+import androidx.test.filters.SmallTest;
+import androidx.test.runner.AndroidJUnit4;
+
+import org.junit.Test;
+import org.junit.runner.RunWith;
+
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 
 /**
  * Tests for {@link ArrayUtils}
  */
-public class ArrayUtilsTest extends TestCase {
+@RunWith(AndroidJUnit4.class)
+public class ArrayUtilsTest {
+    @Test
     public void testContains() throws Exception {
         final Object A = new Object();
         final Object B = new Object();
@@ -42,6 +55,7 @@ public class ArrayUtilsTest extends TestCase {
         assertFalse(ArrayUtils.contains(new Object[] { null }, A));
     }
 
+    @Test
     public void testIndexOf() throws Exception {
         final Object A = new Object();
         final Object B = new Object();
@@ -62,6 +76,7 @@ public class ArrayUtilsTest extends TestCase {
         assertEquals(2, ArrayUtils.indexOf(new Object[] { A, null, B }, B));
     }
 
+    @Test
     public void testContainsAll() throws Exception {
         final Object A = new Object();
         final Object B = new Object();
@@ -82,6 +97,7 @@ public class ArrayUtilsTest extends TestCase {
         assertFalse(ArrayUtils.containsAll(new Object[] { A }, new Object[] { null }));
     }
 
+    @Test
     public void testContainsInt() throws Exception {
         assertTrue(ArrayUtils.contains(new int[] { 1, 2, 3 }, 1));
         assertTrue(ArrayUtils.contains(new int[] { 1, 2, 3 }, 2));
@@ -92,6 +108,7 @@ public class ArrayUtilsTest extends TestCase {
         assertFalse(ArrayUtils.contains(new int[] { }, 2));
     }
 
+    @Test
     public void testAppendInt() throws Exception {
         assertArrayEquals(new int[] { 1 },
                 ArrayUtils.appendInt(null, 1));
@@ -103,6 +120,7 @@ public class ArrayUtilsTest extends TestCase {
                 ArrayUtils.appendInt(new int[] { 1, 2 }, 1));
     }
 
+    @Test
     public void testRemoveInt() throws Exception {
         assertNull(ArrayUtils.removeInt(null, 1));
         assertArrayEquals(new int[] { },
@@ -119,6 +137,7 @@ public class ArrayUtilsTest extends TestCase {
                 ArrayUtils.removeInt(new int[] { 1, 2, 3, 1 }, 1));
     }
 
+    @Test
     public void testContainsLong() throws Exception {
         assertTrue(ArrayUtils.contains(new long[] { 1, 2, 3 }, 1));
         assertTrue(ArrayUtils.contains(new long[] { 1, 2, 3 }, 2));
@@ -129,6 +148,7 @@ public class ArrayUtilsTest extends TestCase {
         assertFalse(ArrayUtils.contains(new long[] { }, 2));
     }
 
+    @Test
     public void testAppendLong() throws Exception {
         assertArrayEquals(new long[] { 1 },
                 ArrayUtils.appendLong(null, 1));
@@ -140,6 +160,7 @@ public class ArrayUtilsTest extends TestCase {
                 ArrayUtils.appendLong(new long[] { 1, 2 }, 1));
     }
 
+    @Test
     public void testRemoveLong() throws Exception {
         assertNull(ArrayUtils.removeLong(null, 1));
         assertArrayEquals(new long[] { },
@@ -156,61 +177,311 @@ public class ArrayUtilsTest extends TestCase {
                 ArrayUtils.removeLong(new long[] { 1, 2, 3, 1 }, 1));
     }
 
-    public void testConcatEmpty() throws Exception {
-        assertArrayEquals(new Long[] {},
-                concatElements(Long.class, null, null));
-        assertArrayEquals(new Long[] {},
-                concatElements(Long.class, new Long[] {}, null));
-        assertArrayEquals(new Long[] {},
-                concatElements(Long.class, null, new Long[] {}));
-        assertArrayEquals(new Long[] {},
-                concatElements(Long.class, new Long[] {}, new Long[] {}));
+    @Test
+    public void testConcat_zeroObjectArrays() {
+        // empty varargs array
+        assertArrayEquals(new String[] {}, ArrayUtils.concat(String.class));
+        // null varargs array
+        assertArrayEquals(new String[] {}, ArrayUtils.concat(String.class, (String[][]) null));
     }
 
-    public void testconcatElements() throws Exception {
+    @Test
+    public void testConcat_oneObjectArray() {
+        assertArrayEquals(new String[] { "1", "2" },
+                ArrayUtils.concat(String.class, new String[] { "1", "2" }));
+    }
+
+    @Test
+    public void testConcat_oneEmptyObjectArray() {
+        assertArrayEquals(new String[] {}, ArrayUtils.concat(String.class, (String[]) null));
+        assertArrayEquals(new String[] {}, ArrayUtils.concat(String.class, new String[] {}));
+    }
+
+    @Test
+    public void testConcat_twoObjectArrays() {
         assertArrayEquals(new Long[] { 1L },
-                concatElements(Long.class, new Long[] { 1L }, new Long[] {}));
+                ArrayUtils.concat(Long.class, new Long[] { 1L }, new Long[] {}));
         assertArrayEquals(new Long[] { 1L },
-                concatElements(Long.class, new Long[] {}, new Long[] { 1L }));
+                ArrayUtils.concat(Long.class, new Long[] {}, new Long[] { 1L }));
         assertArrayEquals(new Long[] { 1L, 2L },
-                concatElements(Long.class, new Long[] { 1L }, new Long[] { 2L }));
+                ArrayUtils.concat(Long.class, new Long[] { 1L }, new Long[] { 2L }));
         assertArrayEquals(new Long[] { 1L, 2L, 3L, 4L },
-                concatElements(Long.class, new Long[] { 1L, 2L }, new Long[] { 3L, 4L }));
+                ArrayUtils.concat(Long.class, new Long[] { 1L, 2L }, new Long[] { 3L, 4L }));
     }
 
-    public void testConcatElements_threeWay() {
+    @Test
+    public void testConcat_twoEmptyObjectArrays() {
+        assertArrayEquals(new Long[] {}, ArrayUtils.concat(Long.class, null, null));
+        assertArrayEquals(new Long[] {}, ArrayUtils.concat(Long.class, new Long[] {}, null));
+        assertArrayEquals(new Long[] {}, ArrayUtils.concat(Long.class, null, new Long[] {}));
+        assertArrayEquals(new Long[] {},
+                ArrayUtils.concat(Long.class, new Long[] {}, new Long[] {}));
+    }
+
+    @Test
+    public void testConcat_threeObjectArrays() {
         String[] array1 = { "1", "2" };
         String[] array2 = { "3", "4" };
         String[] array3 = { "5", "6" };
-        String[] expectation = {"1", "2", "3", "4", "5", "6"};
+        String[] expectation = { "1", "2", "3", "4", "5", "6" };
 
-        String[] concatResult = ArrayUtils.concatElements(String.class, array1, array2, array3);
-        assertArrayEquals(expectation, concatResult);
+        assertArrayEquals(expectation, ArrayUtils.concat(String.class, array1, array2, array3));
     }
 
-
-    public void testConcatElements_threeWayWithNull() {
+    @Test
+    public void testConcat_threeObjectArraysWithNull() {
         String[] array1 = { "1", "2" };
         String[] array2 = null;
         String[] array3 = { "5", "6" };
-        String[] expectation = {"1", "2", "5", "6"};
+        String[] expectation = { "1", "2", "5", "6" };
 
-        String[] concatResult = ArrayUtils.concatElements(String.class, array1, array2, array3);
-        assertArrayEquals(expectation, concatResult);
+        assertArrayEquals(expectation, ArrayUtils.concat(String.class, array1, array2, array3));
     }
 
-    public void testConcatElements_zeroElements() {
-        String[] expectation = new String[0];
-
-        String[] concatResult = ArrayUtils.concatElements(String.class);
-        assertArrayEquals(expectation, concatResult);
+    @Test
+    public void testConcat_zeroByteArrays() {
+        // empty varargs array
+        assertArrayEquals(new byte[] {}, ArrayUtils.concat());
+        // null varargs array
+        assertArrayEquals(new byte[] {}, ArrayUtils.concat((byte[][]) null));
     }
 
-    public void testConcatElements_oneNullElement() {
-        String[] expectation = new String[0];
-
-        String[] concatResult = ArrayUtils.concatElements(String.class, null);
-        assertArrayEquals(expectation, concatResult);
+    @Test
+    public void testConcat_oneByteArray() {
+        assertArrayEquals(new byte[] { 1, 2 }, ArrayUtils.concat(new byte[] { 1, 2 }));
     }
 
+    @Test
+    public void testConcat_oneEmptyByteArray() {
+        assertArrayEquals(new byte[] {}, ArrayUtils.concat((byte[]) null));
+        assertArrayEquals(new byte[] {}, ArrayUtils.concat(new byte[] {}));
+    }
+
+    @Test
+    public void testConcat_twoByteArrays() {
+        assertArrayEquals(new byte[] { 1 }, ArrayUtils.concat(new byte[] { 1 }, new byte[] {}));
+        assertArrayEquals(new byte[] { 1 }, ArrayUtils.concat(new byte[] {}, new byte[] { 1 }));
+        assertArrayEquals(new byte[] { 1, 2 },
+                ArrayUtils.concat(new byte[] { 1 }, new byte[] { 2 }));
+        assertArrayEquals(new byte[] { 1, 2, 3, 4 },
+                ArrayUtils.concat(new byte[] { 1, 2 }, new byte[] { 3, 4 }));
+    }
+
+    @Test
+    public void testConcat_twoEmptyByteArrays() {
+        assertArrayEquals(new byte[] {}, ArrayUtils.concat((byte[]) null, null));
+        assertArrayEquals(new byte[] {}, ArrayUtils.concat(new byte[] {}, null));
+        assertArrayEquals(new byte[] {}, ArrayUtils.concat((byte[]) null, new byte[] {}));
+        assertArrayEquals(new byte[] {}, ArrayUtils.concat(new byte[] {}, new byte[] {}));
+    }
+
+    @Test
+    public void testConcat_threeByteArrays() {
+        byte[] array1 = { 1, 2 };
+        byte[] array2 = { 3, 4 };
+        byte[] array3 = { 5, 6 };
+        byte[] expectation = { 1, 2, 3, 4, 5, 6 };
+
+        assertArrayEquals(expectation, ArrayUtils.concat(array1, array2, array3));
+    }
+
+    @Test
+    public void testConcat_threeByteArraysWithNull() {
+        byte[] array1 = { 1, 2 };
+        byte[] array2 = null;
+        byte[] array3 = { 5, 6 };
+        byte[] expectation = { 1, 2, 5, 6 };
+
+        assertArrayEquals(expectation, ArrayUtils.concat(array1, array2, array3));
+    }
+
+    @Test
+    @SmallTest
+    public void testUnstableRemoveIf() throws Exception {
+        java.util.function.Predicate<Object> isNull = new java.util.function.Predicate<Object>() {
+            @Override
+            public boolean test(Object o) {
+                return o == null;
+            }
+        };
+
+        final Object a = new Object();
+        final Object b = new Object();
+        final Object c = new Object();
+
+        ArrayList<Object> collection = null;
+        assertEquals(0, ArrayUtils.unstableRemoveIf(collection, isNull));
+
+        collection = new ArrayList<>();
+        assertEquals(0, ArrayUtils.unstableRemoveIf(collection, isNull));
+
+        collection = new ArrayList<>(Collections.singletonList(a));
+        assertEquals(0, ArrayUtils.unstableRemoveIf(collection, isNull));
+        assertEquals(1, collection.size());
+        assertTrue(collection.contains(a));
+
+        collection = new ArrayList<>(Collections.singletonList(null));
+        assertEquals(1, ArrayUtils.unstableRemoveIf(collection, isNull));
+        assertEquals(0, collection.size());
+
+        collection = new ArrayList<>(Arrays.asList(a, b));
+        assertEquals(0, ArrayUtils.unstableRemoveIf(collection, isNull));
+        assertEquals(2, collection.size());
+        assertTrue(collection.contains(a));
+        assertTrue(collection.contains(b));
+
+        collection = new ArrayList<>(Arrays.asList(a, null));
+        assertEquals(1, ArrayUtils.unstableRemoveIf(collection, isNull));
+        assertEquals(1, collection.size());
+        assertTrue(collection.contains(a));
+
+        collection = new ArrayList<>(Arrays.asList(null, a));
+        assertEquals(1, ArrayUtils.unstableRemoveIf(collection, isNull));
+        assertEquals(1, collection.size());
+        assertTrue(collection.contains(a));
+
+        collection = new ArrayList<>(Arrays.asList(null, null));
+        assertEquals(2, ArrayUtils.unstableRemoveIf(collection, isNull));
+        assertEquals(0, collection.size());
+
+        collection = new ArrayList<>(Arrays.asList(a, b, c));
+        assertEquals(0, ArrayUtils.unstableRemoveIf(collection, isNull));
+        assertEquals(3, collection.size());
+        assertTrue(collection.contains(a));
+        assertTrue(collection.contains(b));
+        assertTrue(collection.contains(c));
+
+        collection = new ArrayList<>(Arrays.asList(a, b, null));
+        assertEquals(1, ArrayUtils.unstableRemoveIf(collection, isNull));
+        assertEquals(2, collection.size());
+        assertTrue(collection.contains(a));
+        assertTrue(collection.contains(b));
+
+        collection = new ArrayList<>(Arrays.asList(a, null, b));
+        assertEquals(1, ArrayUtils.unstableRemoveIf(collection, isNull));
+        assertEquals(2, collection.size());
+        assertTrue(collection.contains(a));
+        assertTrue(collection.contains(b));
+
+        collection = new ArrayList<>(Arrays.asList(null, a, b));
+        assertEquals(1, ArrayUtils.unstableRemoveIf(collection, isNull));
+        assertEquals(2, collection.size());
+        assertTrue(collection.contains(a));
+        assertTrue(collection.contains(b));
+
+        collection = new ArrayList<>(Arrays.asList(a, null, null));
+        assertEquals(2, ArrayUtils.unstableRemoveIf(collection, isNull));
+        assertEquals(1, collection.size());
+        assertTrue(collection.contains(a));
+
+        collection = new ArrayList<>(Arrays.asList(null, null, a));
+        assertEquals(2, ArrayUtils.unstableRemoveIf(collection, isNull));
+        assertEquals(1, collection.size());
+        assertTrue(collection.contains(a));
+
+        collection = new ArrayList<>(Arrays.asList(null, a, null));
+        assertEquals(2, ArrayUtils.unstableRemoveIf(collection, isNull));
+        assertEquals(1, collection.size());
+        assertTrue(collection.contains(a));
+
+        collection = new ArrayList<>(Arrays.asList(null, null, null));
+        assertEquals(3, ArrayUtils.unstableRemoveIf(collection, isNull));
+        assertEquals(0, collection.size());
+    }
+
+    @Test
+    @SmallTest
+    public void testThrowsIfOutOfBounds_passesWhenRangeInsideArray() {
+        ArrayUtils.throwsIfOutOfBounds(10, 2, 6);
+    }
+
+    @Test
+    @SmallTest
+    public void testThrowsIfOutOfBounds_passesWhenRangeIsWholeArray() {
+        ArrayUtils.throwsIfOutOfBounds(10, 0, 10);
+    }
+
+    @Test
+    @SmallTest
+    public void testThrowsIfOutOfBounds_passesWhenEmptyRangeAtStart() {
+        ArrayUtils.throwsIfOutOfBounds(10, 0, 0);
+    }
+
+    @Test
+    @SmallTest
+    public void testThrowsIfOutOfBounds_passesWhenEmptyRangeAtEnd() {
+        ArrayUtils.throwsIfOutOfBounds(10, 10, 0);
+    }
+
+    @Test
+    @SmallTest
+    public void testThrowsIfOutOfBounds_passesWhenEmptyArray() {
+        ArrayUtils.throwsIfOutOfBounds(0, 0, 0);
+    }
+
+    @Test
+    @SmallTest
+    public void testThrowsIfOutOfBounds_failsWhenRangeStartNegative() {
+        try {
+            ArrayUtils.throwsIfOutOfBounds(10, -1, 5);
+            fail();
+        } catch (ArrayIndexOutOfBoundsException expected) {
+            // expected
+        }
+    }
+
+    @Test
+    @SmallTest
+    public void testThrowsIfOutOfBounds_failsWhenCountNegative() {
+        try {
+            ArrayUtils.throwsIfOutOfBounds(10, 5, -1);
+            fail();
+        } catch (ArrayIndexOutOfBoundsException expected) {
+            // expected
+        }
+    }
+
+    @Test
+    @SmallTest
+    public void testThrowsIfOutOfBounds_failsWhenRangeStartTooHigh() {
+        try {
+            ArrayUtils.throwsIfOutOfBounds(10, 11, 0);
+            fail();
+        } catch (ArrayIndexOutOfBoundsException expected) {
+            // expected
+        }
+    }
+
+    @Test
+    @SmallTest
+    public void testThrowsIfOutOfBounds_failsWhenRangeEndTooHigh() {
+        try {
+            ArrayUtils.throwsIfOutOfBounds(10, 5, 6);
+            fail();
+        } catch (ArrayIndexOutOfBoundsException expected) {
+            // expected
+        }
+    }
+
+    @Test
+    @SmallTest
+    public void testThrowsIfOutOfBounds_failsWhenLengthNegative() {
+        try {
+            ArrayUtils.throwsIfOutOfBounds(-1, 0, 0);
+            fail();
+        } catch (ArrayIndexOutOfBoundsException expected) {
+            // expected
+        }
+    }
+
+    @Test
+    @SmallTest
+    public void testThrowsIfOutOfBounds_failsWhenOverflowRangeEndTooHigh() {
+        try {
+            ArrayUtils.throwsIfOutOfBounds(Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE);
+            fail();
+        } catch (ArrayIndexOutOfBoundsException expected) {
+            // expected
+        }
+    }
 }

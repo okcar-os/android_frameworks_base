@@ -16,12 +16,12 @@
 
 package com.android.wm.shell.compatui;
 
+import static android.app.AppCompatTaskInfo.CAMERA_COMPAT_CONTROL_TREATMENT_SUGGESTED;
+
 import android.annotation.IdRes;
-import android.app.TaskInfo;
-import android.app.TaskInfo.CameraCompatControlState;
+import android.app.AppCompatTaskInfo.CameraCompatControlState;
 import android.content.Context;
 import android.util.AttributeSet;
-import android.view.MotionEvent;
 import android.view.View;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
@@ -58,10 +58,10 @@ class CompatUILayout extends LinearLayout {
     }
 
     void updateCameraTreatmentButton(@CameraCompatControlState int newState) {
-        int buttonBkgId = newState == TaskInfo.CAMERA_COMPAT_CONTROL_TREATMENT_SUGGESTED
+        int buttonBkgId = newState == CAMERA_COMPAT_CONTROL_TREATMENT_SUGGESTED
                 ? R.drawable.camera_compat_treatment_suggested_ripple
                 : R.drawable.camera_compat_treatment_applied_ripple;
-        int hintStringId = newState == TaskInfo.CAMERA_COMPAT_CONTROL_TREATMENT_SUGGESTED
+        int hintStringId = newState == CAMERA_COMPAT_CONTROL_TREATMENT_SUGGESTED
                 ? R.string.camera_compat_treatment_suggested_button_description
                 : R.string.camera_compat_treatment_applied_button_description;
         final ImageButton button = findViewById(R.id.camera_compat_treatment_button);
@@ -110,14 +110,6 @@ class CompatUILayout extends LinearLayout {
         // Need to relayout after changes like hiding / showing a hint since they affect size.
         // Doing this directly in setSizeCompatHintVisibility can result in flaky animation.
         mWindowManager.relayout();
-    }
-
-    @Override
-    public boolean onInterceptTouchEvent(MotionEvent ev) {
-        if (ev.getAction() == MotionEvent.ACTION_DOWN) {
-            mWindowManager.relayout();
-        }
-        return super.onInterceptTouchEvent(ev);
     }
 
     @Override

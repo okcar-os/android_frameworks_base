@@ -42,20 +42,27 @@ import android.view.WindowManager.LayoutParams;
 import androidx.annotation.Nullable;
 
 import com.android.systemui.Dependency;
-import com.android.systemui.R;
 import com.android.systemui.animation.DialogLaunchAnimator;
 import com.android.systemui.broadcast.BroadcastDispatcher;
+import com.android.systemui.dagger.qualifiers.Application;
 import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.flags.Flags;
 import com.android.systemui.model.SysUiState;
+import com.android.systemui.res.R;
 import com.android.systemui.shared.system.QuickStepContract;
 import com.android.systemui.util.DialogKt;
 
 import java.util.ArrayList;
 import java.util.List;
 
+import javax.inject.Inject;
+
 /**
- * Base class for dialogs that should appear over panels and keyguard.
+ * Class for dialogs that should appear over panels and keyguard.
+ *
+ * DO NOT SUBCLASS THIS. See {@link DialogDelegate} for an interface that enables
+ * customizing behavior via composition instead of inheritance. Clients should implement the
+ * Delegate class and then pass their implementation into the SystemUIDialog constructor.
  *
  * Optionally provide a {@link SystemUIDialogManager} to its constructor to send signals to
  * listeners on whether this dialog is showing.
@@ -64,14 +71,15 @@ import java.util.List;
  * and dismisses itself when it receives the broadcast.
  */
 public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigChangedCallback {
+    protected static final int DEFAULT_THEME = R.style.Theme_SystemUI_Dialog;
     // TODO(b/203389579): Remove this once the dialog width on large screens has been agreed on.
     private static final String FLAG_TABLET_DIALOG_WIDTH =
             "persist.systemui.flag_tablet_dialog_width";
-    private static final int DEFAULT_THEME = R.style.Theme_SystemUI_Dialog;
-    private static final boolean DEFAULT_DISMISS_ON_DEVICE_LOCK = true;
+    public static final boolean DEFAULT_DISMISS_ON_DEVICE_LOCK = true;
 
     private final Context mContext;
     private final FeatureFlags mFeatureFlags;
+    private final DialogDelegate<SystemUIDialog> mDelegate;
     @Nullable private final DismissReceiver mDismissReceiver;
     private final Handler mHandler = new Handler();
     private final SystemUIDialogManager mDialogManager;
@@ -82,18 +90,19 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
     private int mLastConfigurationWidthDp = -1;
     private int mLastConfigurationHeightDp = -1;
 
-    private List<Runnable> mOnCreateRunnables = new ArrayList<>();
+    private final List<Runnable> mOnCreateRunnables = new ArrayList<>();
 
+    /**
+     * @deprecated Don't subclass SystemUIDialog. Please subclass {@link Delegate} and pass it to
+     *             {@link Factory#create(DialogDelegate)} to create a custom dialog.
+     */
+    @Deprecated
     public SystemUIDialog(Context context) {
         this(context, DEFAULT_THEME, DEFAULT_DISMISS_ON_DEVICE_LOCK);
     }
 
     public SystemUIDialog(Context context, int theme) {
         this(context, theme, DEFAULT_DISMISS_ON_DEVICE_LOCK);
-    }
-
-    public SystemUIDialog(Context context, boolean dismissOnDeviceLock) {
-        this(context, DEFAULT_THEME, dismissOnDeviceLock);
     }
 
     public SystemUIDialog(Context context, int theme, boolean dismissOnDeviceLock) {
@@ -108,15 +117,124 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
                 Dependency.get(DialogLaunchAnimator.class));
     }
 
-    public SystemUIDialog(Context context, int theme, boolean dismissOnDeviceLock,
+    public static class Factory {
+        private final Context mContext;
+        private final FeatureFlags mFeatureFlags;
+        private final SystemUIDialogManager mSystemUIDialogManager;
+        private final SysUiState mSysUiState;
+        private final BroadcastDispatcher mBroadcastDispatcher;
+        private final DialogLaunchAnimator mDialogLaunchAnimator;
+
+        @Inject
+        public Factory(
+                @Application Context context,
+                FeatureFlags featureFlags,
+                SystemUIDialogManager systemUIDialogManager,
+                SysUiState sysUiState,
+                BroadcastDispatcher broadcastDispatcher,
+                DialogLaunchAnimator dialogLaunchAnimator) {
+            mContext = context;
+            mFeatureFlags = featureFlags;
+            mSystemUIDialogManager = systemUIDialogManager;
+            mSysUiState = sysUiState;
+            mBroadcastDispatcher = broadcastDispatcher;
+            mDialogLaunchAnimator = dialogLaunchAnimator;
+        }
+
+        /** Creates a new instance of {@link SystemUIDialog} with no customized behavior.
+         *
+         * When you just need a dialog, call this.
+         */
+        public SystemUIDialog create() {
+            return create(new DialogDelegate<>(){}, mContext);
+        }
+
+        /**
+         * Creates a new instance of {@link SystemUIDialog} with {@code delegate} as the {@link
+         * Delegate}.
+         *
+         * When you need to customize the dialog, pass it a delegate.
+         */
+        public SystemUIDialog create(Delegate delegate, Context context) {
+            return create((DialogDelegate<SystemUIDialog>) delegate, context);
+        }
+
+        public SystemUIDialog create(Delegate delegate) {
+            return create(delegate, mContext);
+        }
+
+        private SystemUIDialog create(DialogDelegate<SystemUIDialog> dialogDelegate,
+                Context context) {
+            return new SystemUIDialog(
+                    context,
+                    DEFAULT_THEME,
+                    DEFAULT_DISMISS_ON_DEVICE_LOCK,
+                    mFeatureFlags,
+                    mSystemUIDialogManager,
+                    mSysUiState,
+                    mBroadcastDispatcher,
+                    mDialogLaunchAnimator,
+                    dialogDelegate);
+        }
+    }
+
+    public SystemUIDialog(
+            Context context,
+            int theme,
+            boolean dismissOnDeviceLock,
             FeatureFlags featureFlags,
             SystemUIDialogManager dialogManager,
             SysUiState sysUiState,
             BroadcastDispatcher broadcastDispatcher,
             DialogLaunchAnimator dialogLaunchAnimator) {
+        this(
+                context,
+                theme,
+                dismissOnDeviceLock,
+                featureFlags,
+                dialogManager,
+                sysUiState,
+                broadcastDispatcher,
+                dialogLaunchAnimator,
+                new DialogDelegate<>(){});
+    }
+
+    public SystemUIDialog(
+            Context context,
+            int theme,
+            boolean dismissOnDeviceLock,
+            FeatureFlags featureFlags,
+            SystemUIDialogManager dialogManager,
+            SysUiState sysUiState,
+            BroadcastDispatcher broadcastDispatcher,
+            DialogLaunchAnimator dialogLaunchAnimator,
+            Delegate delegate) {
+        this(
+                context,
+                theme,
+                dismissOnDeviceLock,
+                featureFlags,
+                dialogManager,
+                sysUiState,
+                broadcastDispatcher,
+                dialogLaunchAnimator,
+                (DialogDelegate<SystemUIDialog>) delegate);
+    }
+
+    public SystemUIDialog(
+            Context context,
+            int theme,
+            boolean dismissOnDeviceLock,
+            FeatureFlags featureFlags,
+            SystemUIDialogManager dialogManager,
+            SysUiState sysUiState,
+            BroadcastDispatcher broadcastDispatcher,
+            DialogLaunchAnimator dialogLaunchAnimator,
+            DialogDelegate<SystemUIDialog> delegate) {
         super(context, theme);
         mContext = context;
         mFeatureFlags = featureFlags;
+        mDelegate = delegate;
 
         applyFlags(this);
         WindowManager.LayoutParams attrs = getWindow().getAttributes();
@@ -131,7 +249,9 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
+        mDelegate.beforeCreate(this, savedInstanceState);
         super.onCreate(savedInstanceState);
+        mDelegate.onCreate(this, savedInstanceState);
 
         Configuration config = getContext().getResources().getConfiguration();
         mLastConfigurationWidthDp = config.screenWidthDp;
@@ -176,6 +296,8 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
 
             updateWindowSize();
         }
+
+        mDelegate.onConfigurationChanged(this, configuration);
     }
 
     /**
@@ -195,7 +317,7 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
     }
 
     @Override
-    protected void onStart() {
+    protected final void onStart() {
         super.onStart();
 
         if (mDismissReceiver != null) {
@@ -208,10 +330,20 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
         mDialogManager.setShowing(this, true);
         mSysUiState.setFlag(QuickStepContract.SYSUI_STATE_DIALOG_SHOWING, true)
                 .commitUpdate(mContext.getDisplayId());
+
+        start();
+    }
+
+    /**
+     * Called when {@link #onStart} is called. Subclasses wishing to override {@link #onStart()}
+     * should override this method instead.
+     */
+    protected void start() {
+        mDelegate.onStart(this);
     }
 
     @Override
-    protected void onStop() {
+    protected final void onStop() {
         super.onStop();
 
         if (mDismissReceiver != null) {
@@ -222,6 +354,22 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
         mDialogManager.setShowing(this, false);
         mSysUiState.setFlag(QuickStepContract.SYSUI_STATE_DIALOG_SHOWING, false)
                 .commitUpdate(mContext.getDisplayId());
+
+        stop();
+    }
+
+    /**
+     * Called when {@link #onStop} is called. Subclasses wishing to override {@link #onStop()}
+     * should override this method instead.
+     */
+    protected void stop() {
+        mDelegate.onStop(this);
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean hasFocus) {
+        super.onWindowFocusChanged(hasFocus);
+        mDelegate.onWindowFocusChanged(this, hasFocus);
     }
 
     public void setShowForAllUsers(boolean show) {
@@ -341,7 +489,6 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
         registerDismissListener(dialog, null);
     }
 
-
     /**
      * Registers a listener that dismisses the given dialog when it receives
      * the screen off / close system dialogs broadcast.
@@ -415,7 +562,8 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
         // We first look for the background on the dialogContentWithBackground added by
         // DialogLaunchAnimator. If it's not there, we use the background of the DecorView.
         View viewWithBackground = decorView.findViewByPredicate(
-                view -> view.getTag(R.id.tag_dialog_background) != null);
+                view -> view.getTag(
+                        com.android.systemui.animation.R.id.tag_dialog_background) != null);
         Drawable background = viewWithBackground != null ? viewWithBackground.getBackground()
                 : decorView.getBackground();
         Insets insets = background != null ? background.getOpticalInsets() : Insets.NONE;
@@ -465,5 +613,19 @@ public class SystemUIDialog extends AlertDialog implements ViewRootImpl.ConfigCh
             mDialogLaunchAnimator.disableAllCurrentDialogsExitAnimations();
             mDialog.dismiss();
         }
+    }
+
+    /**
+     * A delegate class that should be implemented in place of sublcassing {@link SystemUIDialog}.
+     *
+     * Implement this interface and then pass an instance of your implementation to
+     * {@link SystemUIDialog.Factory#create(Delegate)}.
+     */
+    public interface Delegate extends DialogDelegate<SystemUIDialog> {
+        /**
+         * Returns a new {@link SystemUIDialog} which has been passed this Delegate in its
+         * construction.
+         */
+        SystemUIDialog createDialog();
     }
 }

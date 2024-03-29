@@ -21,4 +21,3 @@
     android:divider="@drawable/controls_list_divider"
     android:showDividers="middle"
 />
-

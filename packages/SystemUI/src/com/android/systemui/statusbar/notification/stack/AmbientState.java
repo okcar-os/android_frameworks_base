@@ -26,15 +26,13 @@ import android.util.MathUtils;
 import androidx.annotation.VisibleForTesting;
 
 import com.android.systemui.Dumpable;
-import com.android.systemui.R;
+import com.android.systemui.res.R;
 import com.android.systemui.dagger.SysUISingleton;
 import com.android.systemui.dump.DumpManager;
-import com.android.systemui.flags.FeatureFlags;
 import com.android.systemui.shade.transition.LargeScreenShadeInterpolator;
 import com.android.systemui.statusbar.NotificationShelf;
 import com.android.systemui.statusbar.StatusBarState;
 import com.android.systemui.statusbar.notification.collection.NotificationEntry;
-import com.android.systemui.statusbar.notification.row.ActivatableNotificationView;
 import com.android.systemui.statusbar.notification.row.ExpandableNotificationRow;
 import com.android.systemui.statusbar.notification.row.ExpandableView;
 import com.android.systemui.statusbar.notification.stack.StackScrollAlgorithm.BypassController;
@@ -58,14 +56,12 @@ public class AmbientState implements Dumpable {
     private final SectionProvider mSectionProvider;
     private final BypassController mBypassController;
     private final LargeScreenShadeInterpolator mLargeScreenShadeInterpolator;
-    private final FeatureFlags mFeatureFlags;
     /**
      *  Used to read bouncer states.
      */
     private StatusBarKeyguardViewManager mStatusBarKeyguardViewManager;
     private int mScrollY;
     private boolean mDimmed;
-    private ActivatableNotificationView mActivatedChild;
     private float mOverScrollTopAmount;
     private float mOverScrollBottomAmount;
     private boolean mDozing;
@@ -90,10 +86,15 @@ public class AmbientState implements Dumpable {
     private boolean mExpansionChanging;
     private boolean mIsSmallScreen;
     private boolean mPulsing;
-    private boolean mUnlockHintRunning;
     private float mHideAmount;
     private boolean mAppearing;
     private float mPulseHeight = MAX_PULSE_HEIGHT;
+
+    /**
+     * The ExpandableNotificationRow that is pulsing, or the one that was pulsing
+     * when the device started to transition from AOD to LockScreen.
+     */
+    private ExpandableNotificationRow mPulsingRow;
 
     /** Fraction of lockscreen to shade animation (on lockscreen swipe down). */
     private float mFractionToShade;
@@ -120,6 +121,7 @@ public class AmbientState implements Dumpable {
     private float mAppearFraction;
     private float mOverExpansion;
     private int mStackTopMargin;
+    private boolean mUseSplitShade;
 
     /** Distance of top of notifications panel from top of screen. */
     private float mStackY = 0;
@@ -227,6 +229,20 @@ public class AmbientState implements Dumpable {
     }
 
     /**
+     * @param useSplitShade True if we are showing split shade.
+     */
+    public void setUseSplitShade(boolean useSplitShade) {
+        mUseSplitShade = useSplitShade;
+    }
+
+    /**
+     * @return True if we are showing split shade.
+     */
+    public boolean getUseSplitShade() {
+        return mUseSplitShade;
+    }
+
+    /**
      * @return Fraction of shade expansion.
      */
     public float getExpansionFraction() {
@@ -257,13 +273,12 @@ public class AmbientState implements Dumpable {
             @NonNull SectionProvider sectionProvider,
             @NonNull BypassController bypassController,
             @Nullable StatusBarKeyguardViewManager statusBarKeyguardViewManager,
-            @NonNull LargeScreenShadeInterpolator largeScreenShadeInterpolator,
-            @NonNull FeatureFlags featureFlags) {
+            @NonNull LargeScreenShadeInterpolator largeScreenShadeInterpolator
+    ) {
         mSectionProvider = sectionProvider;
         mBypassController = bypassController;
         mStatusBarKeyguardViewManager = statusBarKeyguardViewManager;
         mLargeScreenShadeInterpolator = largeScreenShadeInterpolator;
-        mFeatureFlags = featureFlags;
         reload(context);
         dumpManager.registerDumpable(this);
     }
@@ -360,14 +375,6 @@ public class AmbientState implements Dumpable {
         mHideSensitive = hideSensitive;
     }
 
-    /**
-     * In dimmed mode, a child can be activated, which happens on the first tap of the double-tap
-     * interaction. This child is then scaled normally and its background is fully opaque.
-     */
-    public void setActivatedChild(ActivatableNotificationView activatedChild) {
-        mActivatedChild = activatedChild;
-    }
-
     public boolean isDimmed() {
         // While we are expanding from pulse, we want the notifications not to be dimmed, otherwise
         // you'd see the difference to the pulsing notification
@@ -380,10 +387,6 @@ public class AmbientState implements Dumpable {
 
     public boolean isHideSensitive() {
         return mHideSensitive;
-    }
-
-    public ActivatableNotificationView getActivatedChild() {
-        return mActivatedChild;
     }
 
     public void setOverScrollAmount(float amount, boolean onTop) {
@@ -578,6 +581,19 @@ public class AmbientState implements Dumpable {
         return mPulsing && entry.isAlerting();
     }
 
+    public void setPulsingRow(ExpandableNotificationRow row) {
+        mPulsingRow = row;
+    }
+
+    /**
+     * @param row The row to check
+     * @return true if row is the pulsing row when the device started to transition from AOD to lock
+     * screen
+     */
+    public boolean isPulsingRow(ExpandableView row) {
+        return mPulsingRow == row;
+    }
+
     public boolean isPanelTracking() {
         return mPanelTracking;
     }
@@ -588,14 +604,6 @@ public class AmbientState implements Dumpable {
 
     public void setSmallScreen(boolean smallScreen) {
         mIsSmallScreen = smallScreen;
-    }
-
-    public void setUnlockHintRunning(boolean unlockHintRunning) {
-        mUnlockHintRunning = unlockHintRunning;
-    }
-
-    public boolean isUnlockHintRunning() {
-        return mUnlockHintRunning;
     }
 
     /**
@@ -748,10 +756,6 @@ public class AmbientState implements Dumpable {
         return mLargeScreenShadeInterpolator;
     }
 
-    public FeatureFlags getFeatureFlags() {
-        return mFeatureFlags;
-    }
-
     @Override
     public void dump(PrintWriter pw, String[] args) {
         pw.println("mTopPadding=" + mTopPadding);
@@ -772,7 +776,6 @@ public class AmbientState implements Dumpable {
         pw.println("mPulseHeight=" + mPulseHeight);
         pw.println("mTrackedHeadsUpRow.key=" + logKey(mTrackedHeadsUpRow));
         pw.println("mMaxHeadsUpTranslation=" + mMaxHeadsUpTranslation);
-        pw.println("mUnlockHintRunning=" + mUnlockHintRunning);
         pw.println("mDozeAmount=" + mDozeAmount);
         pw.println("mDozing=" + mDozing);
         pw.println("mFractionToShade=" + mFractionToShade);

@@ -17,15 +17,16 @@
 package com.android.systemui.statusbar.pipeline.mobile.ui.viewmodel
 
 import com.android.settingslib.AccessibilityContentDescriptions.PHONE_SIGNAL_STRENGTH
-import com.android.settingslib.AccessibilityContentDescriptions.PHONE_SIGNAL_STRENGTH_NONE
-import com.android.settingslib.graph.SignalDrawable
 import com.android.systemui.common.shared.model.ContentDescription
 import com.android.systemui.common.shared.model.Icon
+import com.android.systemui.flags.FeatureFlagsClassic
+import com.android.systemui.flags.Flags.NEW_NETWORK_SLICE_UI
 import com.android.systemui.log.table.logDiffsForTable
+import com.android.systemui.res.R
 import com.android.systemui.statusbar.pipeline.airplane.domain.interactor.AirplaneModeInteractor
 import com.android.systemui.statusbar.pipeline.mobile.domain.interactor.MobileIconInteractor
 import com.android.systemui.statusbar.pipeline.mobile.domain.interactor.MobileIconsInteractor
-import com.android.systemui.statusbar.pipeline.mobile.ui.model.SignalIconModel
+import com.android.systemui.statusbar.pipeline.mobile.domain.model.SignalIconModel
 import com.android.systemui.statusbar.pipeline.shared.ConnectivityConstants
 import com.android.systemui.statusbar.pipeline.shared.data.model.DataActivityModel
 import kotlinx.coroutines.CoroutineScope
@@ -37,7 +38,6 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 
 /** Common interface for all of the location-based mobile icon view models. */
@@ -50,6 +50,8 @@ interface MobileIconViewModelCommon {
     val roaming: Flow<Boolean>
     /** The RAT icon (LTE, 3G, 5G, etc) to be displayed. Null if we shouldn't show anything */
     val networkTypeIcon: Flow<Icon.Resource?>
+    /** The slice attribution. Drawn as a background layer */
+    val networkTypeBackground: StateFlow<Icon.Resource?>
     val activityInVisible: Flow<Boolean>
     val activityOutVisible: Flow<Boolean>
     val activityContainerVisible: Flow<Boolean>
@@ -70,27 +72,30 @@ interface MobileIconViewModelCommon {
  */
 @Suppress("EXPERIMENTAL_IS_NOT_ENABLED")
 @OptIn(ExperimentalCoroutinesApi::class)
-class MobileIconViewModel
-constructor(
+class MobileIconViewModel(
     override val subscriptionId: Int,
     iconInteractor: MobileIconInteractor,
     airplaneModeInteractor: AirplaneModeInteractor,
     constants: ConnectivityConstants,
+    flags: FeatureFlagsClassic,
     scope: CoroutineScope,
 ) : MobileIconViewModelCommon {
-    /** Whether or not to show the error state of [SignalDrawable] */
-    private val showExclamationMark: Flow<Boolean> =
-        iconInteractor.isDefaultDataEnabled.mapLatest { !it }
-
     override val isVisible: StateFlow<Boolean> =
         if (!constants.hasDataCapabilities) {
                 flowOf(false)
             } else {
                 combine(
                     airplaneModeInteractor.isAirplaneMode,
+                    iconInteractor.isAllowedDuringAirplaneMode,
                     iconInteractor.isForceHidden,
-                ) { isAirplaneMode, isForceHidden ->
-                    !isAirplaneMode && !isForceHidden
+                ) { isAirplaneMode, isAllowedDuringAirplaneMode, isForceHidden ->
+                    if (isForceHidden) {
+                        false
+                    } else if (isAirplaneMode) {
+                        isAllowedDuringAirplaneMode
+                    } else {
+                        true
+                    }
                 }
             }
             .distinctUntilChanged()
@@ -102,43 +107,12 @@ constructor(
             )
             .stateIn(scope, SharingStarted.WhileSubscribed(), false)
 
-    override val icon: Flow<SignalIconModel> = run {
-        val initial = SignalIconModel.createEmptyState(iconInteractor.numberOfLevels.value)
-        combine(
-                iconInteractor.level,
-                iconInteractor.numberOfLevels,
-                showExclamationMark,
-                iconInteractor.isInService,
-            ) { level, numberOfLevels, showExclamationMark, isInService ->
-                if (!isInService) {
-                    SignalIconModel.createEmptyState(numberOfLevels)
-                } else {
-                    SignalIconModel(level, numberOfLevels, showExclamationMark)
-                }
-            }
-            .distinctUntilChanged()
-            .logDiffsForTable(
-                iconInteractor.tableLogBuffer,
-                columnPrefix = "icon",
-                initialValue = initial,
-            )
-            .stateIn(scope, SharingStarted.WhileSubscribed(), initial)
-    }
+    override val icon: Flow<SignalIconModel> = iconInteractor.signalLevelIcon
 
     override val contentDescription: Flow<ContentDescription> = run {
-        val initial = ContentDescription.Resource(PHONE_SIGNAL_STRENGTH_NONE)
-        combine(
-                iconInteractor.level,
-                iconInteractor.isInService,
-            ) { level, isInService ->
-                val resId =
-                    when {
-                        isInService -> PHONE_SIGNAL_STRENGTH[level]
-                        else -> PHONE_SIGNAL_STRENGTH_NONE
-                    }
-                ContentDescription.Resource(resId)
-            }
-            .distinctUntilChanged()
+        val initial = ContentDescription.Resource(PHONE_SIGNAL_STRENGTH[0])
+        iconInteractor.signalLevelIcon
+            .map { ContentDescription.Resource(PHONE_SIGNAL_STRENGTH[it.level]) }
             .stateIn(scope, SharingStarted.WhileSubscribed(), initial)
     }
 
@@ -146,11 +120,12 @@ constructor(
         combine(
                 iconInteractor.isDataConnected,
                 iconInteractor.isDataEnabled,
-                iconInteractor.isDefaultConnectionFailed,
                 iconInteractor.alwaysShowDataRatIcon,
-                iconInteractor.isConnected,
-            ) { dataConnected, dataEnabled, failedConnection, alwaysShow, connected ->
-                alwaysShow || (dataConnected && dataEnabled && !failedConnection && connected)
+                iconInteractor.mobileIsDefault,
+                iconInteractor.carrierNetworkChangeActive,
+            ) { dataConnected, dataEnabled, alwaysShow, mobileIsDefault, carrierNetworkChange ->
+                alwaysShow ||
+                    (!carrierNetworkChange && (dataEnabled && dataConnected && mobileIsDefault))
             }
             .distinctUntilChanged()
             .logDiffsForTable(
@@ -167,16 +142,33 @@ constructor(
                 showNetworkTypeIcon,
             ) { networkTypeIconGroup, shouldShow ->
                 val desc =
-                    if (networkTypeIconGroup.dataContentDescription != 0)
-                        ContentDescription.Resource(networkTypeIconGroup.dataContentDescription)
+                    if (networkTypeIconGroup.contentDescription != 0)
+                        ContentDescription.Resource(networkTypeIconGroup.contentDescription)
                     else null
-                val icon = Icon.Resource(networkTypeIconGroup.dataType, desc)
+                val icon =
+                    if (networkTypeIconGroup.iconId != 0)
+                        Icon.Resource(networkTypeIconGroup.iconId, desc)
+                    else null
                 return@combine when {
                     !shouldShow -> null
                     else -> icon
                 }
             }
             .distinctUntilChanged()
+            .stateIn(scope, SharingStarted.WhileSubscribed(), null)
+
+    override val networkTypeBackground =
+        if (!flags.isEnabled(NEW_NETWORK_SLICE_UI)) {
+                flowOf(null)
+            } else {
+                iconInteractor.showSliceAttribution.map {
+                    if (it) {
+                        Icon.Resource(R.drawable.mobile_network_type_background, null)
+                    } else {
+                        null
+                    }
+                }
+            }
             .stateIn(scope, SharingStarted.WhileSubscribed(), null)
 
     override val roaming: StateFlow<Boolean> =
@@ -199,36 +191,15 @@ constructor(
     override val activityInVisible: Flow<Boolean> =
         activity
             .map { it?.hasActivityIn ?: false }
-            .distinctUntilChanged()
-            .logDiffsForTable(
-                iconInteractor.tableLogBuffer,
-                columnPrefix = "",
-                columnName = "activityInVisible",
-                initialValue = false,
-            )
             .stateIn(scope, SharingStarted.WhileSubscribed(), false)
 
     override val activityOutVisible: Flow<Boolean> =
         activity
             .map { it?.hasActivityOut ?: false }
-            .distinctUntilChanged()
-            .logDiffsForTable(
-                iconInteractor.tableLogBuffer,
-                columnPrefix = "",
-                columnName = "activityOutVisible",
-                initialValue = false,
-            )
             .stateIn(scope, SharingStarted.WhileSubscribed(), false)
 
     override val activityContainerVisible: Flow<Boolean> =
         activity
             .map { it != null && (it.hasActivityIn || it.hasActivityOut) }
-            .distinctUntilChanged()
-            .logDiffsForTable(
-                iconInteractor.tableLogBuffer,
-                columnPrefix = "",
-                columnName = "activityContainerVisible",
-                initialValue = false,
-            )
             .stateIn(scope, SharingStarted.WhileSubscribed(), false)
 }

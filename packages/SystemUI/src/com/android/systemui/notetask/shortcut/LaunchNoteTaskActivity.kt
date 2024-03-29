@@ -16,41 +16,42 @@
 
 package com.android.systemui.notetask.shortcut
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import com.android.systemui.notetask.NoteTaskController
-import com.android.systemui.notetask.NoteTaskController.ShowNoteTaskUiEvent
+import com.android.systemui.notetask.NoteTaskEntryPoint
 import javax.inject.Inject
 
 /** Activity responsible for launching the note experience, and finish. */
-internal class LaunchNoteTaskActivity
-@Inject
-constructor(
-    private val noteTaskController: NoteTaskController,
-) : ComponentActivity() {
+class LaunchNoteTaskActivity @Inject constructor(private val controller: NoteTaskController) :
+    ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        noteTaskController.showNoteTask(
-            isInMultiWindowMode = isInMultiWindowMode,
-            uiEvent = ShowNoteTaskUiEvent.NOTE_OPENED_VIA_SHORTCUT,
-        )
-
+        val entryPoint =
+            if (isInMultiWindowMode) {
+                NoteTaskEntryPoint.WIDGET_PICKER_SHORTCUT_IN_MULTI_WINDOW_MODE
+            } else {
+                NoteTaskEntryPoint.WIDGET_PICKER_SHORTCUT
+            }
+        controller.showNoteTaskAsUser(entryPoint, user)
         finish()
     }
 
     companion object {
 
         /** Creates a new [Intent] set to start [LaunchNoteTaskActivity]. */
-        fun newIntent(context: Context): Intent {
-            return Intent(context, LaunchNoteTaskActivity::class.java).apply {
+        fun createIntent(context: Context): Intent =
+            Intent(context, LaunchNoteTaskActivity::class.java).apply {
                 // Intent's action must be set in shortcuts, or an exception will be thrown.
-                // TODO(b/254606432): Use Intent.ACTION_CREATE_NOTE instead.
-                action = NoteTaskController.ACTION_CREATE_NOTE
+                action = Intent.ACTION_CREATE_NOTE
             }
-        }
+
+        /** Creates a new [ComponentName] for [LaunchNoteTaskActivity]. */
+        fun createComponent(context: Context): ComponentName =
+            ComponentName(context, LaunchNoteTaskActivity::class.java)
     }
 }

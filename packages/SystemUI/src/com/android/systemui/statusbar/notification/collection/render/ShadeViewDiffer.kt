@@ -18,7 +18,7 @@ package com.android.systemui.statusbar.notification.collection.render
 
 import android.annotation.MainThread
 import android.view.View
-import com.android.systemui.util.traceSection
+import com.android.app.tracing.traceSection
 
 /**
  * Given a "spec" that describes a "tree" of views, adds and removes views from the
@@ -67,7 +67,10 @@ class ShadeViewDiffer(
     fun getViewLabel(view: View): String =
             nodes.values.firstOrNull { node -> node.view === view }?.label ?: view.toString()
 
-    private fun detachChildren(parentNode: ShadeNode, specMap: Map<NodeController, NodeSpec>) {
+    private fun detachChildren(
+        parentNode: ShadeNode,
+        specMap: Map<NodeController, NodeSpec>
+    ) = traceSection("detachChildren") {
         val views = nodes.values.associateBy { it.view }
         fun detachRecursively(parentNode: ShadeNode, specMap: Map<NodeController, NodeSpec>) {
             val parentSpec = specMap[parentNode.controller]
@@ -124,7 +127,10 @@ class ShadeViewDiffer(
         }
     }
 
-    private fun attachChildren(parentNode: ShadeNode, specMap: Map<NodeController, NodeSpec>) {
+    private fun attachChildren(
+        parentNode: ShadeNode,
+        specMap: Map<NodeController, NodeSpec>
+    ): Unit = traceSection("attachChildren") {
         val parentSpec = checkNotNull(specMap[parentNode.controller])
 
         for ((index, childSpec) in parentSpec.children.withIndex()) {
@@ -225,18 +231,24 @@ private class ShadeNode(val controller: NodeController) {
     fun getChildCount(): Int = controller.getChildCount()
 
     fun addChildAt(child: ShadeNode, index: Int) {
-        controller.addChildAt(child.controller, index)
-        child.controller.onViewAdded()
+        traceSection("ShadeNode#addChildAt") {
+            controller.addChildAt(child.controller, index)
+            child.controller.onViewAdded()
+        }
     }
 
     fun moveChildTo(child: ShadeNode, index: Int) {
-        controller.moveChildTo(child.controller, index)
-        child.controller.onViewMoved()
+        traceSection("ShadeNode#moveChildTo") {
+            controller.moveChildTo(child.controller, index)
+            child.controller.onViewMoved()
+        }
     }
 
     fun removeChild(child: ShadeNode, isTransfer: Boolean) {
-        controller.removeChild(child.controller, isTransfer)
-        child.controller.onViewRemoved()
+        traceSection("ShadeNode#removeChild") {
+            controller.removeChild(child.controller, isTransfer)
+            child.controller.onViewRemoved()
+        }
     }
 
     fun offerToKeepInParentForAnimation(): Boolean {

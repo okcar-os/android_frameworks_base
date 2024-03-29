@@ -17,6 +17,7 @@ package com.android.systemui.qs.external;
 
 import static android.view.WindowManager.LayoutParams.TYPE_QS_DIALOG;
 
+import android.app.IUriGrantsManager;
 import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Context;
@@ -31,12 +32,12 @@ import android.os.Binder;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
+import android.os.Process;
 import android.os.RemoteException;
 import android.provider.Settings;
 import android.service.quicksettings.IQSTileService;
 import android.service.quicksettings.Tile;
 import android.service.quicksettings.TileService;
-import android.text.TextUtils;
 import android.text.format.DateUtils;
 import android.util.Log;
 import android.view.IWindowManager;
@@ -44,11 +45,10 @@ import android.view.View;
 import android.view.WindowManagerGlobal;
 import android.widget.Switch;
 
-import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.WorkerThread;
 
-import com.android.internal.annotations.VisibleForTesting;
+import com.android.internal.jank.InteractionJankMonitor;
 import com.android.internal.logging.MetricsLogger;
 import com.android.internal.logging.nano.MetricsProto.MetricsEvent;
 import com.android.systemui.animation.ActivityLaunchAnimator;
@@ -59,6 +59,7 @@ import com.android.systemui.plugins.FalsingManager;
 import com.android.systemui.plugins.qs.QSTile.State;
 import com.android.systemui.plugins.statusbar.StatusBarStateController;
 import com.android.systemui.qs.QSHost;
+import com.android.systemui.qs.QsEventLogger;
 import com.android.systemui.qs.external.TileLifecycleManager.TileChangeListener;
 import com.android.systemui.qs.logging.QSLogger;
 import com.android.systemui.qs.tileimpl.QSTileImpl;
@@ -67,11 +68,13 @@ import com.android.systemui.settings.DisplayTracker;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-import javax.inject.Inject;
-
 import dagger.Lazy;
+import dagger.assisted.Assisted;
+import dagger.assisted.AssistedFactory;
+import dagger.assisted.AssistedInject;
 
-public class CustomTile extends QSTileImpl<State> implements TileChangeListener {
+public class CustomTile extends QSTileImpl<State> implements TileChangeListener,
+        CustomTileInterface {
     public static final String PREFIX = "custom(";
 
     private static final long CUSTOM_STALE_TIMEOUT = DateUtils.HOUR_IN_MILLIS;
@@ -109,23 +112,30 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
     private final AtomicBoolean mInitialDefaultIconFetched = new AtomicBoolean(false);
     private final TileServices mTileServices;
 
-    private CustomTile(
-            QSHost host,
-            Looper backgroundLooper,
-            Handler mainHandler,
+    private int mServiceUid = Process.INVALID_UID;
+
+    private final IUriGrantsManager mIUriGrantsManager;
+
+    @AssistedInject
+    CustomTile(
+            Lazy<QSHost> host,
+            QsEventLogger uiEventLogger,
+            @Background Looper backgroundLooper,
+            @Main Handler mainHandler,
             FalsingManager falsingManager,
             MetricsLogger metricsLogger,
             StatusBarStateController statusBarStateController,
             ActivityStarter activityStarter,
             QSLogger qsLogger,
-            String action,
-            Context userContext,
+            @Assisted String action,
+            @Assisted Context userContext,
             CustomTileStatePersister customTileStatePersister,
             TileServices tileServices,
-            DisplayTracker displayTracker
+            DisplayTracker displayTracker,
+            IUriGrantsManager uriGrantsManager
     ) {
-        super(host, backgroundLooper, mainHandler, falsingManager, metricsLogger,
-                statusBarStateController, activityStarter, qsLogger);
+        super(host.get(), uiEventLogger, backgroundLooper, mainHandler, falsingManager,
+                metricsLogger, statusBarStateController, activityStarter, qsLogger);
         mTileServices = tileServices;
         mWindowManager = WindowManagerGlobal.getWindowManagerService();
         mComponent = ComponentName.unflattenFromString(action);
@@ -138,6 +148,7 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
         mService = mServiceManager.getTileService();
         mCustomTileStatePersister = customTileStatePersister;
         mDisplayTracker = displayTracker;
+        mIUriGrantsManager = uriGrantsManager;
     }
 
     @Override
@@ -172,7 +183,8 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
     private void updateDefaultTileAndIcon() {
         try {
             PackageManager pm = mUserContext.getPackageManager();
-            int flags = PackageManager.MATCH_DIRECT_BOOT_UNAWARE | PackageManager.MATCH_DIRECT_BOOT_AWARE;
+            int flags = PackageManager.MATCH_DIRECT_BOOT_UNAWARE
+                    | PackageManager.MATCH_DIRECT_BOOT_AWARE;
             if (isSystemApp(pm)) {
                 flags |= PackageManager.MATCH_DISABLED_COMPONENTS;
             }
@@ -188,13 +200,8 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
             if (updateIcon) {
                 mTile.setIcon(mDefaultIcon);
             }
-            // Update the label if there is no label or it is the default label.
-            boolean updateLabel = mTile.getLabel() == null
-                    || TextUtils.equals(mTile.getLabel(), mDefaultLabel);
             mDefaultLabel = info.loadLabel(pm);
-            if (updateLabel) {
-                mTile.setLabel(mDefaultLabel);
-            }
+            mTile.setDefaultLabel(mDefaultLabel);
         } catch (PackageManager.NameNotFoundException e) {
             mDefaultIcon = null;
             mDefaultLabel = null;
@@ -209,7 +216,7 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
      * Compare two icons, only works for resources.
      */
     private boolean iconEquals(@Nullable android.graphics.drawable.Icon icon1,
-                               @Nullable android.graphics.drawable.Icon icon2) {
+            @Nullable android.graphics.drawable.Icon icon2) {
         if (icon1 == icon2) {
             return true;
         }
@@ -248,10 +255,12 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
         }
     }
 
+    @Override
     public int getUser() {
         return mUser;
     }
 
+    @Override
     public ComponentName getComponent() {
         return mComponent;
     }
@@ -261,6 +270,7 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
         return super.populate(logMaker).setComponentName(mComponent);
     }
 
+    @Override
     public Tile getQsTile() {
         // TODO(b/191145007) Move to background thread safely
         updateDefaultTileAndIcon();
@@ -272,7 +282,9 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
      *
      * @param tile tile populated with state to apply
      */
-    public void updateTileState(Tile tile) {
+    @Override
+    public void updateTileState(Tile tile, int appUid) {
+        mServiceUid = appUid;
         // This comes from a binder call IQSService.updateQsTile
         mHandler.post(() -> handleUpdateTileState(tile));
     }
@@ -289,8 +301,8 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
         if (tile.getIcon() != null || overwriteNulls) {
             mTile.setIcon(tile.getIcon());
         }
-        if (tile.getLabel() != null || overwriteNulls) {
-            mTile.setLabel(tile.getLabel());
+        if (tile.getCustomLabel() != null || overwriteNulls) {
+            mTile.setLabel(tile.getCustomLabel());
         }
         if (tile.getSubtitle() != null || overwriteNulls) {
             mTile.setSubtitle(tile.getSubtitle());
@@ -305,10 +317,12 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
         mTile.setState(tile.getState());
     }
 
+    @Override
     public void onDialogShown() {
         mIsShowingDialog = true;
     }
 
+    @Override
     public void onDialogHidden() {
         mIsShowingDialog = false;
         try {
@@ -437,14 +451,25 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
         state.state = tileState;
         Drawable drawable = null;
         try {
-            drawable = mTile.getIcon().loadDrawable(mUserContext);
+            drawable = mTile.getIcon().loadDrawableCheckingUriGrant(
+                    mUserContext,
+                    mIUriGrantsManager,
+                    mServiceUid,
+                    mComponent.getPackageName()
+            );
         } catch (Exception e) {
             Log.w(TAG, "Invalid icon, forcing into unavailable state");
             state.state = Tile.STATE_UNAVAILABLE;
-            drawable = mDefaultIcon.loadDrawable(mUserContext);
         }
 
-        final Drawable drawableF = drawable;
+        final Drawable drawableF;
+        if (drawable != null) {
+            drawableF = drawable;
+        } else if (mDefaultIcon != null) {
+            drawableF = mDefaultIcon.loadDrawable(mUserContext);
+        } else {
+            drawableF = null;
+        }
         state.iconSupplier = () -> {
             if (drawableF == null) return null;
             Drawable.ConstantState cs = drawableF.getConstantState();
@@ -491,6 +516,7 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
         return mComponent.getPackageName();
     }
 
+    @Override
     public void startUnlockAndRun() {
         mActivityStarter.postQSRunnableDismissingKeyguard(() -> {
             try {
@@ -502,8 +528,10 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
 
     /**
      * Starts an {@link android.app.Activity}
+     *
      * @param pendingIntent A PendingIntent for an Activity to be launched immediately.
      */
+    @Override
     public void startActivityAndCollapse(PendingIntent pendingIntent) {
         if (!pendingIntent.isActivity()) {
             Log.i(TAG, "Intent not for activity.");
@@ -511,12 +539,17 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
             Log.i(TAG, "Launching activity before click");
         } else {
             Log.i(TAG, "The activity is starting");
-            ActivityLaunchAnimator.Controller controller = mViewClicked == null
-                    ? null
-                    : ActivityLaunchAnimator.Controller.fromView(mViewClicked, 0);
-            mUiHandler.post(() ->
-                    mActivityStarter.startPendingIntentDismissingKeyguard(
-                            pendingIntent, null, controller)
+
+            ActivityLaunchAnimator.Controller controller =
+                    mViewClicked == null ? null :
+                    ActivityLaunchAnimator.Controller.fromView(
+                            mViewClicked,
+                            InteractionJankMonitor.CUJ_SHADE_APP_LAUNCH_FROM_QS_TILE
+                    );
+            mActivityStarter.startPendingIntentMaybeDismissingKeyguard(
+                    pendingIntent,
+                    /* intentSentUiThreadCallback= */ null,
+                    controller
             );
         }
     }
@@ -547,92 +580,17 @@ public class CustomTile extends QSTileImpl<State> implements TileChangeListener 
     /**
      * Create a {@link CustomTile} for a given spec and user.
      *
-     * @param builder     including injected common dependencies.
+     * @param factory     including injected common dependencies.
      * @param spec        as provided by {@link CustomTile#toSpec}
      * @param userContext context for the user that is creating this tile.
      * @return a new {@link CustomTile}
      */
-    public static CustomTile create(Builder builder, String spec, Context userContext) {
-        return builder
-                .setSpec(spec)
-                .setUserContext(userContext)
-                .build();
+    public static CustomTile create(Factory factory, String spec, Context userContext) {
+        return factory.create(getAction(spec), userContext);
     }
 
-    public static class Builder {
-        final Lazy<QSHost> mQSHostLazy;
-        final Looper mBackgroundLooper;
-        final Handler mMainHandler;
-        private final FalsingManager mFalsingManager;
-        final MetricsLogger mMetricsLogger;
-        final StatusBarStateController mStatusBarStateController;
-        final ActivityStarter mActivityStarter;
-        final QSLogger mQSLogger;
-        final CustomTileStatePersister mCustomTileStatePersister;
-        private TileServices mTileServices;
-        final DisplayTracker mDisplayTracker;
-
-        Context mUserContext;
-        String mSpec = "";
-
-        @Inject
-        public Builder(
-                Lazy<QSHost> hostLazy,
-                @Background Looper backgroundLooper,
-                @Main Handler mainHandler,
-                FalsingManager falsingManager,
-                MetricsLogger metricsLogger,
-                StatusBarStateController statusBarStateController,
-                ActivityStarter activityStarter,
-                QSLogger qsLogger,
-                CustomTileStatePersister customTileStatePersister,
-                TileServices tileServices,
-                DisplayTracker displayTracker
-        ) {
-            mQSHostLazy = hostLazy;
-            mBackgroundLooper = backgroundLooper;
-            mMainHandler = mainHandler;
-            mFalsingManager = falsingManager;
-            mMetricsLogger = metricsLogger;
-            mStatusBarStateController = statusBarStateController;
-            mActivityStarter = activityStarter;
-            mQSLogger = qsLogger;
-            mCustomTileStatePersister = customTileStatePersister;
-            mTileServices = tileServices;
-            mDisplayTracker = displayTracker;
-        }
-
-        Builder setSpec(@NonNull String spec) {
-            mSpec = spec;
-            return this;
-        }
-
-        Builder setUserContext(@NonNull Context userContext) {
-            mUserContext = userContext;
-            return this;
-        }
-
-        @VisibleForTesting
-        public CustomTile build() {
-            if (mUserContext == null) {
-                throw new NullPointerException("UserContext cannot be null");
-            }
-            String action = getAction(mSpec);
-            return new CustomTile(
-                    mQSHostLazy.get(),
-                    mBackgroundLooper,
-                    mMainHandler,
-                    mFalsingManager,
-                    mMetricsLogger,
-                    mStatusBarStateController,
-                    mActivityStarter,
-                    mQSLogger,
-                    action,
-                    mUserContext,
-                    mCustomTileStatePersister,
-                    mTileServices,
-                    mDisplayTracker
-            );
-        }
+    @AssistedFactory
+    public interface Factory {
+        CustomTile create(String action, Context userContext);
     }
 }

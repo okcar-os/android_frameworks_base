@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 The LineageOS Project
+ * Copyright (C) 2018-2023 The LineageOS Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,24 +17,23 @@
 package com.android.systemui.statusbar.phone;
 
 import android.content.Context;
-import android.util.Log;
+import android.database.ContentObserver;
+import android.net.Uri;
+import android.provider.Settings;
 import android.view.View;
+
+import androidx.annotation.Nullable;
 
 import com.android.systemui.Dependency;
 import com.android.systemui.R;
 import com.android.systemui.plugins.DarkIconDispatcher;
-import com.android.systemui.statusbar.phone.StatusBarIconController;
 import com.android.systemui.statusbar.policy.Clock;
-import com.android.systemui.tuner.TunerService;
 
 import lineageos.providers.LineageSettings;
 
-public class ClockController implements TunerService.Tunable {
+public class ClockController {
 
     private static final String TAG = "ClockController";
-
-    private static final String CLOCK_POSITION =
-            "lineagesystem:" + LineageSettings.System.STATUS_BAR_CLOCK;
 
     private static final int CLOCK_POSITION_RIGHT = 0;
     private static final int CLOCK_POSITION_CENTER = 1;
@@ -43,8 +42,8 @@ public class ClockController implements TunerService.Tunable {
     private Context mContext;
     private Clock mActiveClock, mCenterClock, mLeftClock, mRightClock;
 
-    private int mClockPosition = CLOCK_POSITION_LEFT;
-    private boolean mBlackListed = false;
+    private int mClockPosition;
+    private boolean mDenyListed;
 
     public ClockController(Context context, View statusBar) {
         mContext = context;
@@ -55,8 +54,28 @@ public class ClockController implements TunerService.Tunable {
 
         mActiveClock = mLeftClock;
 
-        Dependency.get(TunerService.class).addTunable(this,
-                StatusBarIconController.ICON_HIDE_LIST, CLOCK_POSITION);
+        Uri iconHideList = Settings.Secure.getUriFor(StatusBarIconController.ICON_HIDE_LIST);
+        Uri statusBarClock = LineageSettings.System.getUriFor(
+                LineageSettings.System.STATUS_BAR_CLOCK);
+        ContentObserver contentObserver = new ContentObserver(null) {
+            @Override
+            public void onChange(boolean selfChange, @Nullable Uri uri) {
+                if (iconHideList.equals(uri)) {
+                    mDenyListed = StatusBarIconController.getIconHideList(mContext,
+                            Settings.Secure.getString(mContext.getContentResolver(),
+                                    StatusBarIconController.ICON_HIDE_LIST)).contains("clock");
+                } else if (statusBarClock.equals(uri)) {
+                    mClockPosition = LineageSettings.System.getInt(mContext.getContentResolver(),
+                            LineageSettings.System.STATUS_BAR_CLOCK, CLOCK_POSITION_LEFT);
+                }
+                updateActiveClock();
+            }
+        };
+        mContext.getContentResolver().registerContentObserver(iconHideList, false, contentObserver);
+        mContext.getContentResolver().registerContentObserver(statusBarClock, false,
+                contentObserver);
+        contentObserver.onChange(true, iconHideList);
+        contentObserver.onChange(true, statusBarClock);
     }
 
     public Clock getClock() {
@@ -72,27 +91,16 @@ public class ClockController implements TunerService.Tunable {
     }
 
     private void updateActiveClock() {
-        mActiveClock.setClockVisibleByUser(false);
-        removeDarkReceiver();
-        mActiveClock = getClock();
-        mActiveClock.setClockVisibleByUser(true);
-        addDarkReceiver();
+        mContext.getMainExecutor().execute(() -> {
+            mActiveClock.setClockVisibleByUser(false);
+            removeDarkReceiver();
+            mActiveClock = getClock();
+            mActiveClock.setClockVisibleByUser(true);
+            addDarkReceiver();
 
-        // Override any previous setting
-        mActiveClock.setClockVisibleByUser(!mBlackListed);
-    }
-
-    @Override
-    public void onTuningChanged(String key, String newValue) {
-        Log.d(TAG, "onTuningChanged key=" + key + " value=" + newValue);
-
-        if (CLOCK_POSITION.equals(key)) {
-            mClockPosition = TunerService.parseInteger(newValue, CLOCK_POSITION_LEFT);
-        } else {
-            mBlackListed = StatusBarIconController.getIconHideList(
-                    mContext, newValue).contains("clock");
-        }
-        updateActiveClock();
+            // Override any previous setting
+            mActiveClock.setClockVisibleByUser(!mDenyListed);
+        });
     }
 
     public void addDarkReceiver() {
@@ -101,5 +109,9 @@ public class ClockController implements TunerService.Tunable {
 
     public void removeDarkReceiver() {
         Dependency.get(DarkIconDispatcher.class).removeDarkReceiver(mActiveClock);
+    }
+
+    public void onDensityOrFontScaleChanged() {
+        mActiveClock.onDensityOrFontScaleChanged();
     }
 }

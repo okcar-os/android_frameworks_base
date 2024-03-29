@@ -23,7 +23,7 @@ import android.view.Choreographer
 import android.view.View
 import android.view.ViewRootImpl
 import androidx.test.filters.SmallTest
-import com.android.systemui.R
+import com.android.systemui.res.R
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.animation.ShadeInterpolation
 import com.android.systemui.dump.DumpManager
@@ -33,6 +33,7 @@ import com.android.systemui.statusbar.phone.BiometricUnlockController
 import com.android.systemui.statusbar.phone.DozeParameters
 import com.android.systemui.statusbar.phone.ScrimController
 import com.android.systemui.statusbar.policy.FakeConfigurationController
+import com.android.systemui.statusbar.policy.ResourcesSplitShadeStateController
 import com.android.systemui.statusbar.policy.KeyguardStateController
 import com.android.systemui.util.WallpaperController
 import com.android.systemui.util.mockito.eq
@@ -114,8 +115,9 @@ class NotificationShadeDepthControllerTest : SysuiTestCase() {
                 notificationShadeWindowController,
                 dozeParameters,
                 context,
+                    ResourcesSplitShadeStateController(),
                 dumpManager,
-                configurationController)
+                configurationController,)
         notificationShadeDepthController.shadeAnimation = shadeAnimation
         notificationShadeDepthController.brightnessMirrorSpring = brightnessSpring
         notificationShadeDepthController.root = root
@@ -356,6 +358,7 @@ class NotificationShadeDepthControllerTest : SysuiTestCase() {
     @Test
     fun ignoreShadeBlurUntilHidden_schedulesFrame() {
         notificationShadeDepthController.blursDisabledForAppLaunch = true
+        verify(blurUtils).prepareBlur(any(), anyInt())
         verify(choreographer)
             .postFrameCallback(eq(notificationShadeDepthController.updateBlurCallback))
     }
@@ -419,6 +422,7 @@ class NotificationShadeDepthControllerTest : SysuiTestCase() {
         notificationShadeDepthController.updateBlurCallback.doFrame(0)
         verify(notificationShadeWindowController).setBackgroundBlurRadius(eq(0))
         verify(wallpaperController).setNotificationShadeZoom(eq(1f))
+        verify(blurUtils).prepareBlur(any(), eq(0))
         verify(blurUtils).applyBlur(eq(viewRootImpl), eq(0), eq(false))
     }
 

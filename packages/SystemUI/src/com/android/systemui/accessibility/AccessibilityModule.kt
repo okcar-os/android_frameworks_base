@@ -16,61 +16,16 @@
 
 package com.android.systemui.accessibility
 
-import com.android.systemui.qs.tileimpl.QSTileImpl
-import com.android.systemui.qs.tiles.ColorCorrectionTile
-import com.android.systemui.qs.tiles.ColorInversionTile
-import com.android.systemui.qs.tiles.DreamTile
-import com.android.systemui.qs.tiles.FontScalingTile
-import com.android.systemui.qs.tiles.NightDisplayTile
-import com.android.systemui.qs.tiles.OneHandedModeTile
-import com.android.systemui.qs.tiles.ReduceBrightColorsTile
+import com.android.systemui.accessibility.data.repository.ColorCorrectionRepository
+import com.android.systemui.accessibility.data.repository.ColorCorrectionRepositoryImpl
+import com.android.systemui.accessibility.qs.QSAccessibilityModule
 import dagger.Binds
 import dagger.Module
-import dagger.multibindings.IntoMap
-import dagger.multibindings.StringKey
 
-@Module
+@Module(includes = [QSAccessibilityModule::class])
 interface AccessibilityModule {
-
-    /** Inject ColorInversionTile into tileMap in QSModule */
     @Binds
-    @IntoMap
-    @StringKey(ColorInversionTile.TILE_SPEC)
-    fun bindColorInversionTile(colorInversionTile: ColorInversionTile): QSTileImpl<*>
-
-    /** Inject NightDisplayTile into tileMap in QSModule */
-    @Binds
-    @IntoMap
-    @StringKey(NightDisplayTile.TILE_SPEC)
-    fun bindNightDisplayTile(nightDisplayTile: NightDisplayTile): QSTileImpl<*>
-
-    /** Inject ReduceBrightColorsTile into tileMap in QSModule */
-    @Binds
-    @IntoMap
-    @StringKey(ReduceBrightColorsTile.TILE_SPEC)
-    fun bindReduceBrightColorsTile(reduceBrightColorsTile: ReduceBrightColorsTile): QSTileImpl<*>
-
-    /** Inject OneHandedModeTile into tileMap in QSModule */
-    @Binds
-    @IntoMap
-    @StringKey(OneHandedModeTile.TILE_SPEC)
-    fun bindOneHandedModeTile(oneHandedModeTile: OneHandedModeTile): QSTileImpl<*>
-
-    /** Inject ColorCorrectionTile into tileMap in QSModule */
-    @Binds
-    @IntoMap
-    @StringKey(ColorCorrectionTile.TILE_SPEC)
-    fun bindColorCorrectionTile(colorCorrectionTile: ColorCorrectionTile): QSTileImpl<*>
-
-    /** Inject DreamTile into tileMap in QSModule */
-    @Binds
-    @IntoMap
-    @StringKey(DreamTile.TILE_SPEC)
-    fun bindDreamTile(dreamTile: DreamTile): QSTileImpl<*>
-
-    /** Inject FontScalingTile into tileMap in QSModule */
-    @Binds
-    @IntoMap
-    @StringKey(FontScalingTile.TILE_SPEC)
-    fun bindFontScalingTile(fontScalingTile: FontScalingTile): QSTileImpl<*>
+    abstract fun colorCorrectionRepository(
+        impl: ColorCorrectionRepositoryImpl
+    ): ColorCorrectionRepository
 }

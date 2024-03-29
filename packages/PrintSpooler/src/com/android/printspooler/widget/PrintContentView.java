@@ -383,9 +383,7 @@ public final class PrintContentView extends ViewGroup implements View.OnClickLis
         if (focused != null && focused.isFocused()) {
             InputMethodManager imm = (InputMethodManager) mContext.getSystemService(
                     Context.INPUT_METHOD_SERVICE);
-            if (imm.isActive(focused)) {
-                imm.hideSoftInputFromWindow(getWindowToken(), 0);
-            }
+            imm.hideSoftInputFromView(focused, 0);
             focused.clearFocus();
         }
     }
@@ -402,7 +400,7 @@ public final class PrintContentView extends ViewGroup implements View.OnClickLis
 
         @Override
         public void onViewPositionChanged(View changedView, int left, int top, int dx, int dy) {
-            if ((isOptionsClosed() || isOptionsClosed()) && dy <= 0) {
+            if (isOptionsClosed() && dy <= 0) {
                 return;
             }
 

@@ -34,17 +34,14 @@ import android.view.HapticFeedbackConstants
 import com.android.internal.annotations.VisibleForTesting
 import com.android.systemui.broadcast.BroadcastSender
 import com.android.systemui.controls.ControlsMetricsLogger
-import com.android.systemui.controls.settings.ControlsSettingsDialogManager
 import com.android.systemui.controls.settings.ControlsSettingsRepository
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.dagger.qualifiers.Main
-import com.android.systemui.flags.FeatureFlags
-import com.android.systemui.flags.Flags
 import com.android.systemui.plugins.ActivityStarter
 import com.android.systemui.statusbar.VibratorHelper
 import com.android.systemui.statusbar.policy.KeyguardStateController
 import com.android.systemui.util.concurrency.DelayableExecutor
-import com.android.wm.shell.TaskViewFactory
+import com.android.wm.shell.taskview.TaskViewFactory
 import java.util.Optional
 import javax.inject.Inject
 
@@ -60,8 +57,6 @@ class ControlActionCoordinatorImpl @Inject constructor(
         private val controlsMetricsLogger: ControlsMetricsLogger,
         private val vibrator: VibratorHelper,
         private val controlsSettingsRepository: ControlsSettingsRepository,
-        private val controlsSettingsDialogManager: ControlsSettingsDialogManager,
-        private val featureFlags: FeatureFlags,
 ) : ControlActionCoordinator {
     private var dialog: Dialog? = null
     private var actionsInProgress = mutableSetOf<String>()
@@ -76,9 +71,6 @@ class ControlActionCoordinatorImpl @Inject constructor(
     }
 
     override fun closeDialogs() {
-        if (!featureFlags.isEnabled(Flags.USE_APP_PANELS)) {
-            controlsSettingsDialogManager.closeDialog()
-        }
         val isActivityFinishing =
             (activityContext as? Activity)?.let { it.isFinishing || it.isDestroyed }
         if (isActivityFinishing == true) {
@@ -126,12 +118,13 @@ class ControlActionCoordinatorImpl @Inject constructor(
         )
     }
 
-    override fun drag(isEdge: Boolean) {
-        if (isEdge) {
-            vibrate(Vibrations.rangeEdgeEffect)
-        } else {
-            vibrate(Vibrations.rangeMiddleEffect)
-        }
+    override fun drag(cvh: ControlViewHolder, isEdge: Boolean) {
+        val constant =
+            if (isEdge)
+                HapticFeedbackConstants.SEGMENT_TICK
+            else
+                HapticFeedbackConstants.SEGMENT_FREQUENT_TICK
+        vibrator.performHapticFeedback(cvh.layout, constant)
     }
 
     override fun setValue(cvh: ControlViewHolder, templateId: String, newValue: Float) {
@@ -192,7 +185,6 @@ class ControlActionCoordinatorImpl @Inject constructor(
                 true
             }, null, true /* afterKeyguardGone */)
         } else {
-            showSettingsDialogIfNeeded(action)
             action.invoke()
         }
     }
@@ -224,15 +216,6 @@ class ControlActionCoordinatorImpl @Inject constructor(
                     cvh.setErrorStatus()
                 }
             }
-        }
-    }
-
-    private fun showSettingsDialogIfNeeded(action: Action) {
-        if (action.authIsRequired) {
-            return
-        }
-        if (!featureFlags.isEnabled(Flags.USE_APP_PANELS)) {
-            controlsSettingsDialogManager.maybeShowDialog(activityContext) {}
         }
     }
 

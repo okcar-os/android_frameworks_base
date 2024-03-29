@@ -33,6 +33,7 @@ import com.android.internal.widget.LockPatternUtils
 import com.android.systemui.SystemUIAppComponentFactoryBase
 import com.android.systemui.SysuiTestCase
 import com.android.systemui.animation.DialogLaunchAnimator
+import com.android.systemui.dock.DockManagerFake
 import com.android.systemui.flags.FakeFeatureFlags
 import com.android.systemui.flags.Flags
 import com.android.systemui.keyguard.data.quickaffordance.FakeKeyguardQuickAffordanceConfig
@@ -40,21 +41,23 @@ import com.android.systemui.keyguard.data.quickaffordance.FakeKeyguardQuickAffor
 import com.android.systemui.keyguard.data.quickaffordance.KeyguardQuickAffordanceLegacySettingSyncer
 import com.android.systemui.keyguard.data.quickaffordance.KeyguardQuickAffordanceLocalUserSelectionManager
 import com.android.systemui.keyguard.data.quickaffordance.KeyguardQuickAffordanceRemoteUserSelectionManager
-import com.android.systemui.keyguard.data.repository.FakeKeyguardBouncerRepository
-import com.android.systemui.keyguard.data.repository.FakeKeyguardRepository
+import com.android.systemui.keyguard.data.repository.FakeBiometricSettingsRepository
 import com.android.systemui.keyguard.data.repository.KeyguardQuickAffordanceRepository
-import com.android.systemui.keyguard.domain.interactor.KeyguardInteractor
+import com.android.systemui.keyguard.domain.interactor.KeyguardInteractorFactory
 import com.android.systemui.keyguard.domain.interactor.KeyguardQuickAffordanceInteractor
+import com.android.systemui.keyguard.shared.quickaffordance.KeyguardQuickAffordancesMetricsLogger
 import com.android.systemui.keyguard.ui.preview.KeyguardPreviewRenderer
 import com.android.systemui.keyguard.ui.preview.KeyguardPreviewRendererFactory
 import com.android.systemui.keyguard.ui.preview.KeyguardRemotePreviewManager
 import com.android.systemui.plugins.ActivityStarter
+import com.android.systemui.res.R
 import com.android.systemui.settings.UserFileManager
 import com.android.systemui.settings.UserTracker
+import com.android.systemui.shade.domain.interactor.shadeInteractor
 import com.android.systemui.shared.customization.data.content.CustomizationProviderContract as Contract
 import com.android.systemui.shared.keyguard.shared.model.KeyguardQuickAffordanceSlots
-import com.android.systemui.statusbar.CommandQueue
 import com.android.systemui.statusbar.policy.KeyguardStateController
+import com.android.systemui.testKosmos
 import com.android.systemui.util.FakeSharedPreferences
 import com.android.systemui.util.mockito.any
 import com.android.systemui.util.mockito.mock
@@ -62,9 +65,11 @@ import com.android.systemui.util.mockito.whenever
 import com.android.systemui.util.settings.FakeSettings
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -89,18 +94,27 @@ class CustomizationProviderTest : SysuiTestCase() {
     @Mock private lateinit var backgroundHandler: Handler
     @Mock private lateinit var previewSurfacePackage: SurfaceControlViewHost.SurfacePackage
     @Mock private lateinit var launchAnimator: DialogLaunchAnimator
-    @Mock private lateinit var commandQueue: CommandQueue
     @Mock private lateinit var devicePolicyManager: DevicePolicyManager
+    @Mock private lateinit var logger: KeyguardQuickAffordancesMetricsLogger
+
+    private lateinit var dockManager: DockManagerFake
+    private lateinit var biometricSettingsRepository: FakeBiometricSettingsRepository
 
     private lateinit var underTest: CustomizationProvider
     private lateinit var testScope: TestScope
 
+    private val kosmos = testKosmos()
+
     @Before
     fun setUp() {
         MockitoAnnotations.initMocks(this)
+        overrideResource(R.bool.custom_lockscreen_shortcuts_enabled, true)
         whenever(previewRenderer.surfacePackage).thenReturn(previewSurfacePackage)
         whenever(previewRendererFactory.create(any())).thenReturn(previewRenderer)
         whenever(backgroundHandler.looper).thenReturn(TestableLooper.get(this).looper)
+
+        dockManager = DockManagerFake()
+        biometricSettingsRepository = FakeBiometricSettingsRepository()
 
         underTest = CustomizationProvider()
         val testDispatcher = UnconfinedTestDispatcher()
@@ -161,22 +175,21 @@ class CustomizationProviderTest : SysuiTestCase() {
             )
         val featureFlags =
             FakeFeatureFlags().apply {
-                set(Flags.CUSTOMIZABLE_LOCK_SCREEN_QUICK_AFFORDANCES, true)
                 set(Flags.LOCKSCREEN_CUSTOM_CLOCKS, true)
-                set(Flags.REVAMPED_WALLPAPER_UI, true)
                 set(Flags.WALLPAPER_FULLSCREEN_PREVIEW, true)
-                set(Flags.FACE_AUTH_REFACTOR, true)
             }
         underTest.interactor =
             KeyguardQuickAffordanceInteractor(
                 keyguardInteractor =
-                    KeyguardInteractor(
-                        repository = FakeKeyguardRepository(),
-                        commandQueue = commandQueue,
-                        featureFlags = featureFlags,
-                        bouncerRepository = FakeKeyguardBouncerRepository(),
-                    ),
-                registry = mock(),
+                    KeyguardInteractorFactory.create(
+                            featureFlags = featureFlags,
+                            sceneInteractor =
+                                mock {
+                                    whenever(transitioningTo).thenReturn(MutableStateFlow(null))
+                                },
+                        )
+                        .keyguardInteractor,
+                shadeInteractor = kosmos.shadeInteractor,
                 lockPatternUtils = lockPatternUtils,
                 keyguardStateController = keyguardStateController,
                 userTracker = userTracker,
@@ -184,8 +197,12 @@ class CustomizationProviderTest : SysuiTestCase() {
                 featureFlags = featureFlags,
                 repository = { quickAffordanceRepository },
                 launchAnimator = launchAnimator,
+                logger = logger,
                 devicePolicyManager = devicePolicyManager,
+                dockManager = dockManager,
+                biometricSettingsRepository = biometricSettingsRepository,
                 backgroundDispatcher = testDispatcher,
+                appContext = mContext,
             )
         underTest.previewManager =
             KeyguardRemotePreviewManager(
@@ -207,8 +224,15 @@ class CustomizationProviderTest : SysuiTestCase() {
         )
     }
 
+    @After
+    fun tearDown() {
+        mContext
+            .getOrCreateTestableResources()
+            .removeOverride(R.bool.custom_lockscreen_shortcuts_enabled)
+    }
+
     @Test
-    fun `onAttachInfo - reportsContext`() {
+    fun onAttachInfo_reportsContext() {
         val callback: SystemUIAppComponentFactoryBase.ContextAvailableCallback = mock()
         underTest.setContextAvailableCallback(callback)
 
@@ -251,7 +275,7 @@ class CustomizationProviderTest : SysuiTestCase() {
     }
 
     @Test
-    fun `insert and query selection`() =
+    fun insertAndQuerySelection() =
         testScope.runTest {
             val slotId = KeyguardQuickAffordanceSlots.SLOT_ID_BOTTOM_START
             val affordanceId = AFFORDANCE_2
@@ -275,7 +299,7 @@ class CustomizationProviderTest : SysuiTestCase() {
         }
 
     @Test
-    fun `query slots`() =
+    fun querySlotsProvidesTwoSlots() =
         testScope.runTest {
             assertThat(querySlots())
                 .isEqualTo(
@@ -293,7 +317,7 @@ class CustomizationProviderTest : SysuiTestCase() {
         }
 
     @Test
-    fun `query affordances`() =
+    fun queryAffordancesProvidesTwoAffordances() =
         testScope.runTest {
             assertThat(queryAffordances())
                 .isEqualTo(
@@ -313,7 +337,7 @@ class CustomizationProviderTest : SysuiTestCase() {
         }
 
     @Test
-    fun `delete and query selection`() =
+    fun deleteAndQuerySelection() =
         testScope.runTest {
             insertSelection(
                 slotId = KeyguardQuickAffordanceSlots.SLOT_ID_BOTTOM_START,
@@ -348,7 +372,7 @@ class CustomizationProviderTest : SysuiTestCase() {
         }
 
     @Test
-    fun `delete all selections in a slot`() =
+    fun deleteAllSelectionsInAslot() =
         testScope.runTest {
             insertSelection(
                 slotId = KeyguardQuickAffordanceSlots.SLOT_ID_BOTTOM_START,

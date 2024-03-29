@@ -17,6 +17,8 @@
 package com.android.systemui.dreams;
 
 import static com.android.systemui.dreams.dagger.DreamModule.DREAM_OVERLAY_WINDOW_TITLE;
+import static com.android.systemui.dreams.dagger.DreamModule.DREAM_TOUCH_INSET_MANAGER;
+import static com.android.systemui.dreams.dagger.DreamModule.HOME_CONTROL_PANEL_DREAM_COMPONENT;
 
 import android.content.ComponentName;
 import android.content.Context;
@@ -41,11 +43,16 @@ import com.android.internal.logging.UiEventLogger;
 import com.android.internal.policy.PhoneWindow;
 import com.android.keyguard.KeyguardUpdateMonitor;
 import com.android.keyguard.KeyguardUpdateMonitorCallback;
+import com.android.systemui.complication.Complication;
+import com.android.systemui.complication.dagger.ComplicationComponent;
 import com.android.systemui.dagger.qualifiers.Main;
-import com.android.systemui.dreams.complication.Complication;
 import com.android.systemui.dreams.dagger.DreamOverlayComponent;
 import com.android.systemui.dreams.touch.DreamOverlayTouchMonitor;
+import com.android.systemui.touch.TouchInsetManager;
 import com.android.systemui.util.concurrency.DelayableExecutor;
+
+import java.util.Arrays;
+import java.util.HashSet;
 
 import javax.inject.Inject;
 import javax.inject.Named;
@@ -70,6 +77,8 @@ public class DreamOverlayService extends android.service.dreams.DreamOverlayServ
     private final KeyguardUpdateMonitor mKeyguardUpdateMonitor;
     @Nullable
     private final ComponentName mLowLightDreamComponent;
+    @Nullable
+    private final ComponentName mHomeControlPanelDreamComponent;
     private final UiEventLogger mUiEventLogger;
     private final WindowManager mWindowManager;
     private final String mWindowTitle;
@@ -83,8 +92,14 @@ public class DreamOverlayService extends android.service.dreams.DreamOverlayServ
     // True if the service has been destroyed.
     private boolean mDestroyed = false;
 
+    private final ComplicationComponent mComplicationComponent;
+
+    private final com.android.systemui.dreams.complication.dagger.ComplicationComponent
+            mDreamComplicationComponent;
+
     private final DreamOverlayComponent mDreamOverlayComponent;
 
+    private final DreamOverlayLifecycleOwner mLifecycleOwner;
     private final LifecycleRegistry mLifecycleRegistry;
 
     private DreamOverlayTouchMonitor mDreamOverlayTouchMonitor;
@@ -102,6 +117,17 @@ public class DreamOverlayService extends android.service.dreams.DreamOverlayServ
                         setCurrentStateLocked(
                                 expanded ? Lifecycle.State.STARTED : Lifecycle.State.RESUMED);
                     });
+                }
+            };
+
+    private final DreamOverlayStateController.Callback mExitAnimationFinishedCallback =
+            new DreamOverlayStateController.Callback() {
+                @Override
+                public void onStateChanged() {
+                    if (!mStateController.areExitAnimationsRunning()) {
+                        mStateController.removeCallback(mExitAnimationFinishedCallback);
+                        resetCurrentDreamOverlayLocked();
+                    }
                 }
             };
 
@@ -129,14 +155,21 @@ public class DreamOverlayService extends android.service.dreams.DreamOverlayServ
     @Inject
     public DreamOverlayService(
             Context context,
+            DreamOverlayLifecycleOwner lifecycleOwner,
             @Main DelayableExecutor executor,
             WindowManager windowManager,
+            ComplicationComponent.Factory complicationComponentFactory,
+            com.android.systemui.dreams.complication.dagger.ComplicationComponent.Factory
+                    dreamComplicationComponentFactory,
             DreamOverlayComponent.Factory dreamOverlayComponentFactory,
             DreamOverlayStateController stateController,
             KeyguardUpdateMonitor keyguardUpdateMonitor,
             UiEventLogger uiEventLogger,
+            @Named(DREAM_TOUCH_INSET_MANAGER) TouchInsetManager touchInsetManager,
             @Nullable @Named(LowLightDreamModule.LOW_LIGHT_DREAM_COMPONENT)
                     ComponentName lowLightDreamComponent,
+            @Nullable @Named(HOME_CONTROL_PANEL_DREAM_COMPONENT)
+                    ComponentName homeControlPanelDreamComponent,
             DreamOverlayCallbackController dreamOverlayCallbackController,
             @Named(DREAM_OVERLAY_WINDOW_TITLE) String windowTitle) {
         super(executor);
@@ -145,6 +178,7 @@ public class DreamOverlayService extends android.service.dreams.DreamOverlayServ
         mWindowManager = windowManager;
         mKeyguardUpdateMonitor = keyguardUpdateMonitor;
         mLowLightDreamComponent = lowLightDreamComponent;
+        mHomeControlPanelDreamComponent = homeControlPanelDreamComponent;
         mKeyguardUpdateMonitor.registerCallback(mKeyguardCallback);
         mStateController = stateController;
         mUiEventLogger = uiEventLogger;
@@ -154,8 +188,17 @@ public class DreamOverlayService extends android.service.dreams.DreamOverlayServ
         final ViewModelStore viewModelStore = new ViewModelStore();
         final Complication.Host host =
                 () -> mExecutor.execute(DreamOverlayService.this::requestExit);
-        mDreamOverlayComponent = dreamOverlayComponentFactory.create(viewModelStore, host);
-        mLifecycleRegistry = mDreamOverlayComponent.getLifecycleRegistry();
+
+        mComplicationComponent = complicationComponentFactory.create(lifecycleOwner, host,
+                viewModelStore, touchInsetManager);
+        mDreamComplicationComponent = dreamComplicationComponentFactory.create(
+                mComplicationComponent.getVisibilityController(), touchInsetManager);
+        mDreamOverlayComponent = dreamOverlayComponentFactory.create(lifecycleOwner,
+                mComplicationComponent.getComplicationHostViewController(), touchInsetManager,
+                new HashSet<>(Arrays.asList(
+                        mDreamComplicationComponent.getHideComplicationTouchHandler())));
+        mLifecycleOwner = lifecycleOwner;
+        mLifecycleRegistry = mLifecycleOwner.getRegistry();
 
         mExecutor.execute(() -> setCurrentStateLocked(Lifecycle.State.CREATED));
     }
@@ -212,6 +255,10 @@ public class DreamOverlayService extends android.service.dreams.DreamOverlayServ
         final ComponentName dreamComponent = getDreamComponent();
         mStateController.setLowLightActive(
                 dreamComponent != null && dreamComponent.equals(mLowLightDreamComponent));
+
+        mStateController.setHomeControlPanelActive(
+                dreamComponent != null && dreamComponent.equals(mHomeControlPanelDreamComponent));
+
         mUiEventLogger.log(DreamOverlayEvent.DREAM_OVERLAY_COMPLETE_START);
 
         mDreamOverlayCallbackController.onStartDream();
@@ -232,10 +279,10 @@ public class DreamOverlayService extends android.service.dreams.DreamOverlayServ
     }
 
     @Override
-    public void onWakeUp(@NonNull Runnable onCompletedCallback) {
+    public void onWakeUp() {
         if (mDreamOverlayContainerViewController != null) {
             mDreamOverlayCallbackController.onWakeUp();
-            mDreamOverlayContainerViewController.wakeUp(onCompletedCallback, mExecutor);
+            mDreamOverlayContainerViewController.wakeUp();
         }
     }
 
@@ -258,6 +305,7 @@ public class DreamOverlayService extends android.service.dreams.DreamOverlayServ
 
         mWindow.clearFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
         mWindow.addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
+        mWindow.addPrivateFlags(WindowManager.LayoutParams.SYSTEM_FLAG_SHOW_FOR_ALL_USERS);
         mWindow.requestFeature(Window.FEATURE_NO_TITLE);
         // Hide all insets when the dream is showing
         mWindow.getDecorView().getWindowInsetsController().hide(WindowInsets.Type.systemBars());
@@ -304,6 +352,11 @@ public class DreamOverlayService extends android.service.dreams.DreamOverlayServ
     }
 
     private void resetCurrentDreamOverlayLocked() {
+        if (mStateController.areExitAnimationsRunning()) {
+            mStateController.addCallback(mExitAnimationFinishedCallback);
+            return;
+        }
+
         if (mStarted && mWindow != null) {
             try {
                 mWindowManager.removeView(mWindow.getDecorView());

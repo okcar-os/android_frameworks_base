@@ -17,10 +17,8 @@
 package com.android.systemui.statusbar.notification.init
 
 import android.service.notification.StatusBarNotification
-import com.android.systemui.ForegroundServiceNotificationListener
 import com.android.systemui.dagger.SysUISingleton
 import com.android.systemui.flags.FeatureFlags
-import com.android.systemui.flags.Flags
 import com.android.systemui.people.widget.PeopleSpaceWidgetManager
 import com.android.systemui.plugins.statusbar.NotificationSwipeActionHelper.SnoozeOption
 import com.android.systemui.statusbar.NotificationListener
@@ -40,10 +38,8 @@ import com.android.systemui.statusbar.notification.collection.notifcollection.No
 import com.android.systemui.statusbar.notification.collection.render.NotifStackController
 import com.android.systemui.statusbar.notification.interruption.HeadsUpViewBinder
 import com.android.systemui.statusbar.notification.logging.NotificationLogger
-import com.android.systemui.statusbar.notification.logging.NotificationMemoryMonitor
 import com.android.systemui.statusbar.notification.row.NotifBindPipelineInitializer
 import com.android.systemui.statusbar.notification.stack.NotificationListContainer
-import com.android.systemui.statusbar.phone.CentralSurfaces
 import com.android.wm.shell.bubbles.Bubbles
 import dagger.Lazy
 import java.util.Optional
@@ -73,18 +69,14 @@ class NotificationsControllerImpl @Inject constructor(
     private val animatedImageNotificationManager: AnimatedImageNotificationManager,
     private val peopleSpaceWidgetManager: PeopleSpaceWidgetManager,
     private val bubblesOptional: Optional<Bubbles>,
-    private val fgsNotifListener: ForegroundServiceNotificationListener,
-    private val memoryMonitor: Lazy<NotificationMemoryMonitor>,
     private val featureFlags: FeatureFlags
 ) : NotificationsController {
 
     override fun initialize(
-        centralSurfaces: CentralSurfaces,
         presenter: NotificationPresenter,
         listContainer: NotificationListContainer,
         stackController: NotifStackController,
         notificationActivityStarter: NotificationActivityStarter,
-        bindRowCallback: NotificationRowBinderImpl.BindRowCallback
     ) {
         notificationListener.registerAsSystemService()
 
@@ -95,13 +87,8 @@ class NotificationsControllerImpl @Inject constructor(
         })
 
         notificationRowBinder.setNotificationClicker(
-                clickerBuilder.build(
-                    Optional.ofNullable(centralSurfaces), bubblesOptional,
-                        notificationActivityStarter))
-        notificationRowBinder.setUpWithPresenter(
-                presenter,
-                listContainer,
-                bindRowCallback)
+            clickerBuilder.build(bubblesOptional, notificationActivityStarter))
+        notificationRowBinder.setUpWithPresenter(presenter, listContainer)
         headsUpViewBinder.setPresenter(presenter)
         notifBindPipelineInitializer.initialize()
         animatedImageNotificationManager.bind()
@@ -116,10 +103,6 @@ class NotificationsControllerImpl @Inject constructor(
         notificationsMediaManager.setUpWithPresenter(presenter)
         notificationLogger.setUpWithContainer(listContainer)
         peopleSpaceWidgetManager.attach(notificationListener)
-        fgsNotifListener.init()
-        if (featureFlags.isEnabled(Flags.NOTIFICATION_MEMORY_MONITOR_ENABLED)) {
-            memoryMonitor.get().init()
-        }
     }
 
     // TODO: Convert all functions below this line into listeners instead of public methods

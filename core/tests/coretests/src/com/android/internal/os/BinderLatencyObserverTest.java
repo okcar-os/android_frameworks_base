@@ -23,7 +23,9 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.junit.Assert.assertEquals;
 
 import android.os.Binder;
+import android.platform.test.annotations.IgnoreUnderRavenwood;
 import android.platform.test.annotations.Presubmit;
+import android.platform.test.ravenwood.RavenwoodRule;
 import android.util.ArrayMap;
 import android.util.proto.ProtoOutputStream;
 
@@ -36,6 +38,7 @@ import com.android.internal.os.BinderLatencyProto.ApiStats;
 import com.android.internal.os.BinderLatencyProto.Dims;
 import com.android.internal.os.BinderLatencyProto.RepeatedApiStats;
 
+import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
@@ -47,7 +50,11 @@ import java.util.Random;
 @SmallTest
 @RunWith(AndroidJUnit4.class)
 @Presubmit
+@IgnoreUnderRavenwood(blockedBy = BinderLatencyObserver.class)
 public class BinderLatencyObserverTest {
+    @Rule
+    public final RavenwoodRule mRavenwood = new RavenwoodRule();
+
     @Test
     public void testLatencyCollectionWithMultipleClasses() {
         TestBinderLatencyObserver blo = new TestBinderLatencyObserver();
@@ -98,7 +105,7 @@ public class BinderLatencyObserverTest {
         assertEquals(1, latencyHistograms.size());
         LatencyDims dims = latencyHistograms.keySet().iterator().next();
         assertEquals(binder.getClass(), dims.getBinderClass());
-        assertEquals(1, dims.getTransactionCode());
+        assertEquals(2, dims.getTransactionCode()); // the first nextInt() is in the constructor
         assertThat(latencyHistograms.get(dims)).asList().containsExactly(1, 0, 0, 0, 0).inOrder();
     }
 
@@ -313,11 +320,11 @@ public class BinderLatencyObserverTest {
                                 int mCallCount = 0;
 
                                 public int nextInt() {
-                                    return mCallCount++;
+                                    throw new IllegalStateException("Should not use nextInt()");
                                 }
 
                                 public int nextInt(int x) {
-                                    return 1;
+                                    return (mCallCount++) % x;
                                 }
                             };
                         }

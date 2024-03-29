@@ -61,19 +61,19 @@ class MessageContainerControllerTest : SysuiTestCase() {
         workProfileData = WorkProfileMessageController.WorkProfileFirstRunData(appName, icon)
 
         val guideline = Guideline(mContext)
-        guideline.id = com.android.systemui.R.id.guideline
+        guideline.id = com.android.systemui.res.R.id.guideline
         screenshotView.addView(guideline)
 
         container = FrameLayout(mContext)
-        container.id = com.android.systemui.R.id.screenshot_message_container
+        container.id = com.android.systemui.res.R.id.screenshot_message_container
         screenshotView.addView(container)
 
         workProfileFirstRunView = FrameLayout(mContext)
-        workProfileFirstRunView.id = com.android.systemui.R.id.work_profile_first_run
+        workProfileFirstRunView.id = com.android.systemui.res.R.id.work_profile_first_run
         container.addView(workProfileFirstRunView)
 
         detectionNoticeView = FrameLayout(mContext)
-        detectionNoticeView.id = com.android.systemui.R.id.screenshot_detection_notice
+        detectionNoticeView.id = com.android.systemui.res.R.id.screenshot_detection_notice
         container.addView(detectionNoticeView)
 
         messageContainer.setView(screenshotView)
@@ -83,7 +83,6 @@ class MessageContainerControllerTest : SysuiTestCase() {
 
     @Test
     fun testOnScreenshotTakenUserHandle_noWorkProfileFirstRun() {
-        featureFlags.set(Flags.SCREENSHOT_WORK_PROFILE_POLICY, true)
         // (just being explicit here)
         whenever(workProfileMessageController.onScreenshotTaken(eq(userHandle))).thenReturn(null)
 
@@ -93,18 +92,7 @@ class MessageContainerControllerTest : SysuiTestCase() {
     }
 
     @Test
-    fun testOnScreenshotTakenUserHandle_noWorkProfileFlag() {
-        featureFlags.set(Flags.SCREENSHOT_WORK_PROFILE_POLICY, false)
-
-        messageContainer.onScreenshotTaken(userHandle)
-
-        verify(workProfileMessageController, never()).onScreenshotTaken(any())
-        verify(workProfileMessageController, never()).populateView(any(), any(), any())
-    }
-
-    @Test
     fun testOnScreenshotTakenUserHandle_withWorkProfileFirstRun() {
-        featureFlags.set(Flags.SCREENSHOT_WORK_PROFILE_POLICY, true)
         whenever(workProfileMessageController.onScreenshotTaken(eq(userHandle)))
             .thenReturn(workProfileData)
         messageContainer.onScreenshotTaken(userHandle)
@@ -116,21 +104,7 @@ class MessageContainerControllerTest : SysuiTestCase() {
     }
 
     @Test
-    fun testOnScreenshotTakenScreenshotData_flagsOff() {
-        featureFlags.set(Flags.SCREENSHOT_WORK_PROFILE_POLICY, false)
-        featureFlags.set(Flags.SCREENSHOT_DETECTION, false)
-
-        messageContainer.onScreenshotTaken(screenshotData)
-
-        verify(workProfileMessageController, never()).onScreenshotTaken(any())
-        verify(screenshotDetectionController, never()).maybeNotifyOfScreenshot(any())
-
-        assertEquals(View.GONE, container.visibility)
-    }
-
-    @Test
     fun testOnScreenshotTakenScreenshotData_nothingToShow() {
-        featureFlags.set(Flags.SCREENSHOT_WORK_PROFILE_POLICY, true)
         featureFlags.set(Flags.SCREENSHOT_DETECTION, true)
 
         messageContainer.onScreenshotTaken(screenshotData)
