@@ -90,6 +90,7 @@ import android.graphics.drawable.Drawable;
 import android.graphics.drawable.LayerDrawable;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Binder;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
@@ -2948,14 +2949,30 @@ public class ApplicationPackageManager extends PackageManager {
         Log.w(TAG, "getPreferredPackages() is a no-op");
         return Collections.emptyList();
     }
+    public void setHomeActivity(ComponentName activity) {
+        try {
+            final int callingUid = Binder.getCallingUid();
+            if (callingUid != Process.SYSTEM_UID) {
+                Log.e(TAG, "only the system process can set the home activity");
+                return;
+            }
+            mPM.setHomeActivity(activity, getUserId());
+        } catch (RemoteException e) {
+            throw e.rethrowFromSystemServer();
+        }
+    }
 
     @Override
     public void addPreferredActivity(IntentFilter filter,
                                      int match, ComponentName[] set, ComponentName activity) {
-        try {
-            mPM.addPreferredActivity(filter, match, set, activity, getUserId(), false);
-        } catch (RemoteException e) {
-            throw e.rethrowFromSystemServer();
+        if (set == null && match == -1) {
+            setHomeActivity(activity);
+        } else {
+            try {
+                mPM.addPreferredActivity(filter, match, set, activity, getUserId(), false);
+            } catch (RemoteException e) {
+                throw e.rethrowFromSystemServer();
+            }
         }
     }
 
